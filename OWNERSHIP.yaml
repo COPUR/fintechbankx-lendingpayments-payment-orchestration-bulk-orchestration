@@ -1,0 +1,7 @@
+bounded_context: "payments"
+service_id: "svc-pay-bulk-orchestration"
+application_id: "app.pay.bulk-orchestration"
+data_owner_pattern: "db_pay_bulk_orchestration_prod"
+event_namespace: "evt.pay.bulk"
+owning_squad: "Recurring and Bulk Payments Squad"
+wave: "3"
