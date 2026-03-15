@@ -1,0 +1,171 @@
+openapi: 3.0.3
+info:
+  title: Bulk Orchestration Service API
+  version: 0.1.0
+  description: API for corporate bulk payment upload, execution and reporting.
+servers:
+  - url: https://api.example.com/open-finance/v1
+paths:
+  /payment-consents/{consentId}/file:
+    post:
+      summary: Upload bulk payment file
+      operationId: uploadBulkFile
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InteractionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/JwsSignature'
+        - $ref: '#/components/parameters/Dpop'
+        - name: consentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '202':
+          description: File accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FilePaymentResponse'
+  /file-payments:
+    post:
+      summary: Initiate bulk payment execution
+      operationId: executeBulkFile
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InteractionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/JwsSignature'
+        - $ref: '#/components/parameters/Dpop'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [Data]
+              properties:
+                Data:
+                  type: object
+                  required: [ConsentId, FilePaymentId]
+                  properties:
+                    ConsentId:
+                      type: string
+                    FilePaymentId:
+                      type: string
+      responses:
+        '202':
+          description: Bulk execution accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FilePaymentResponse'
+  /file-payments/{filePaymentId}:
+    get:
+      summary: Get bulk payment status
+      operationId: getBulkStatus
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InteractionId'
+        - name: filePaymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Bulk status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FilePaymentResponse'
+  /file-payments/{filePaymentId}/report:
+    get:
+      summary: Get bulk execution report
+      operationId: getBulkReport
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/InteractionId'
+        - name: filePaymentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Bulk report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkReportResponse'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    InteractionId:
+      name: x-fapi-interaction-id
+      in: header
+      required: true
+      schema:
+        type: string
+    IdempotencyKey:
+      name: x-idempotency-key
+      in: header
+      required: true
+      schema:
+        type: string
+    JwsSignature:
+      name: x-jws-signature
+      in: header
+      required: true
+      schema:
+        type: string
+    Dpop:
+      name: DPoP
+      in: header
+      required: true
+      schema:
+        type: string
+  schemas:
+    FilePaymentResponse:
+      type: object
+      properties:
+        Data:
+          type: object
+          properties:
+            FilePaymentId:
+              type: string
+            Status:
+              type: string
+    BulkReportResponse:
+      type: object
+      properties:
+        Data:
+          type: object
+          properties:
+            FilePaymentId:
+              type: string
+            TotalItems:
+              type: integer
+            AcceptedItems:
+              type: integer
+            RejectedItems:
+              type: integer
