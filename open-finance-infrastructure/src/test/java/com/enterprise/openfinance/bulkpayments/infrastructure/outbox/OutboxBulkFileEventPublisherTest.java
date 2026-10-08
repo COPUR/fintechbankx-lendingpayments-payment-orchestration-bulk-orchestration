@@ -1,5 +1,6 @@
 package com.enterprise.openfinance.bulkpayments.infrastructure.outbox;
 
+import com.enterprise.openfinance.bulkpayments.domain.model.Money;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileEvent;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFile;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileStatus;
@@ -81,8 +82,8 @@ class OutboxBulkFileEventPublisherTest {
 
     private static BulkFile file() {
         ParsedBulkFile parsed = new ParsedBulkFile(
-                List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", BigDecimal.TEN)),
-                1, 1, 0, BigDecimal.TEN, BigDecimal.TEN, BulkFileStatus.VALIDATED);
+                List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", Money.of("10", "AED"))),
+                1, 1, 0, Money.of("10", "AED"), Money.of("10", "AED"), BulkFileStatus.VALIDATED);
         return BulkFile.accept("FILE-1", "CONS-1", "TPP-001", "IDEMP-1", "hash", "f.csv",
                 BulkIntegrityMode.PARTIAL_REJECTION, parsed, Instant.parse("2026-02-09T10:00:00Z"));
     }

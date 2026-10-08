@@ -60,6 +60,9 @@ public class BulkFileJpaEntity {
     @Column(name = "accepted_amount", nullable = false, precision = 19, scale = 4, updatable = false)
     private BigDecimal acceptedAmount;
 
+    @Column(name = "currency", nullable = false, length = 3, updatable = false)
+    private String currency;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
 
@@ -77,7 +80,7 @@ public class BulkFileJpaEntity {
     BulkFileJpaEntity(String fileId, String consentId, String tppId, String idempotencyKey, String requestHash,
                       String fileName, String integrityMode, String targetStatus, int totalCount,
                       int acceptedCount, int rejectedCount, BigDecimal totalAmount, BigDecimal acceptedAmount,
-                      Instant createdAt) {
+                      String currency, Instant createdAt) {
         this.fileId = fileId;
         this.consentId = consentId;
         this.tppId = tppId;
@@ -91,6 +94,7 @@ public class BulkFileJpaEntity {
         this.rejectedCount = rejectedCount;
         this.totalAmount = totalAmount;
         this.acceptedAmount = acceptedAmount;
+        this.currency = currency;
         this.createdAt = createdAt;
     }
 
@@ -116,6 +120,7 @@ public class BulkFileJpaEntity {
     public int getRejectedCount() { return rejectedCount; }
     public BigDecimal getTotalAmount() { return totalAmount; }
     public BigDecimal getAcceptedAmount() { return acceptedAmount; }
+    public String getCurrency() { return currency; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getProcessedAt() { return processedAt; }
     public long getVersion() { return version; }

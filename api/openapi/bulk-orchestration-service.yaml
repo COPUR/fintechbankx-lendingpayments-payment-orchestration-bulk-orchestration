@@ -60,12 +60,30 @@ paths:
               properties:
                 Data:
                   type: object
-                  required: [ConsentId, FilePaymentId]
+                  required: [ConsentId, FileName, FileContent, FileHash, Currency]
                   properties:
                     ConsentId:
                       type: string
-                    FilePaymentId:
+                      description: Bulk payment consent with scope INITIATEBULKPAYMENTS.
+                    FileName:
                       type: string
+                    FileContent:
+                      type: string
+                      description: CSV with header instruction_id,payee_iban,amount.
+                    FileHash:
+                      type: string
+                      description: Base64url SHA-256 of FileContent (no padding).
+                    Currency:
+                      type: string
+                      pattern: '^[A-Z]{3}$'
+                      description: >-
+                        ISO 4217 currency of every amount in the file. Required and never
+                        defaulted; an amount with more decimals than the currency's minor
+                        units (0 for JPY, 2 for AED, 3 for KWD) is refused with 400.
+                    IntegrityMode:
+                      type: string
+                      enum: [PARTIAL_REJECTION, FULL_REJECTION]
+                      description: Defaults to PARTIAL_REJECTION when absent.
       responses:
         '202':
           description: Bulk execution accepted
@@ -174,9 +192,44 @@ components:
           properties:
             FilePaymentId:
               type: string
-            TotalItems:
+            Status:
+              type: string
+              enum: [Processing, Validated, Rejected]
+            TotalCount:
               type: integer
-            AcceptedItems:
+            AcceptedCount:
               type: integer
-            RejectedItems:
+            RejectedCount:
               type: integer
+            Items:
+              type: array
+              items:
+                $ref: '#/components/schemas/BulkReportItem'
+            GeneratedAt:
+              type: string
+              format: date-time
+        Links:
+          type: object
+          properties:
+            Self:
+              type: string
+    BulkReportItem:
+      type: object
+      properties:
+        LineNumber:
+          type: integer
+        InstructionId:
+          type: string
+        PayeeIban:
+          type: string
+        Amount:
+          type: string
+          pattern: '^[0-9]+(\.[0-9]+)?$'
+          description: Decimal string at the minor units of Currency (JPY 1500, AED 10.00, KWD 1.234), never rounded.
+        Currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        Status:
+          type: string
+        ErrorMessage:
+          type: string

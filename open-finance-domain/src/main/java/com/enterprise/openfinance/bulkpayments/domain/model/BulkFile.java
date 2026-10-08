@@ -5,7 +5,7 @@ import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileEvent;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileRejected;
 import com.enterprise.openfinance.bulkpayments.domain.exception.BusinessRuleViolationException;
 
-import java.math.BigDecimal;
+import java.util.Currency;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,8 +42,8 @@ public final class BulkFile {
     private final int totalCount;
     private final int acceptedCount;
     private final int rejectedCount;
-    private final BigDecimal totalAmount;
-    private final BigDecimal acceptedAmount;
+    private final Money totalAmount;
+    private final Money acceptedAmount;
     private final Instant createdAt;
     private Instant processedAt;
     private final long version;
@@ -62,8 +62,8 @@ public final class BulkFile {
                      int totalCount,
                      int acceptedCount,
                      int rejectedCount,
-                     BigDecimal totalAmount,
-                     BigDecimal acceptedAmount,
+                     Money totalAmount,
+                     Money acceptedAmount,
                      Instant createdAt,
                      Instant processedAt,
                      long version) {
@@ -106,7 +106,10 @@ public final class BulkFile {
         if (totalAmount == null || totalAmount.signum() <= 0) {
             throw new IllegalArgumentException("totalAmount must be positive");
         }
-        if (acceptedAmount == null || acceptedAmount.signum() < 0 || acceptedAmount.compareTo(totalAmount) > 0) {
+        if (acceptedAmount == null || !acceptedAmount.currency().equals(totalAmount.currency())) {
+            throw new IllegalArgumentException("acceptedAmount and totalAmount must share one currency");
+        }
+        if (acceptedAmount.signum() < 0 || acceptedAmount.isGreaterThan(totalAmount)) {
             throw new IllegalArgumentException("acceptedAmount must be between zero and totalAmount");
         }
         if (createdAt == null) {
@@ -174,8 +177,8 @@ public final class BulkFile {
                                      int totalCount,
                                      int acceptedCount,
                                      int rejectedCount,
-                                     BigDecimal totalAmount,
-                                     BigDecimal acceptedAmount,
+                                     Money totalAmount,
+                                     Money acceptedAmount,
                                      Instant createdAt,
                                      Instant processedAt,
                                      long version) {
@@ -291,11 +294,16 @@ public final class BulkFile {
         return rejectedCount;
     }
 
-    public BigDecimal totalAmount() {
+    /** The file currency, from the upload request. */
+    public Currency currency() {
+        return totalAmount.currency();
+    }
+
+    public Money totalAmount() {
         return totalAmount;
     }
 
-    public BigDecimal acceptedAmount() {
+    public Money acceptedAmount() {
         return acceptedAmount;
     }
 

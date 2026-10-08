@@ -3,6 +3,7 @@ package com.enterprise.openfinance.bulkpayments;
 import com.enterprise.openfinance.bulkpayments.domain.port.in.command.SubmitBulkFileCommand;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkIntegrityMode;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkUploadResult;
+import com.enterprise.openfinance.bulkpayments.domain.model.Money;
 import com.enterprise.openfinance.bulkpayments.domain.port.in.BulkPaymentUseCase;
 import com.enterprise.openfinance.bulkpayments.domain.port.in.ProcessBulkFilesUseCase;
 import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkFilePort;
@@ -238,6 +239,52 @@ class BulkOrchestrationServiceIT {
     }
 
     @Test
+    void currencyIsRequiredAndAmountsFollowItsMinorUnits() throws Exception {
+        String content = csv("INS-1," + IBAN + ",10.5");
+        String[][] refused = {
+                {null, "currency is required"},
+                {" ", "currency is required"},
+                {"XAU", "Unsupported Currency"},
+                {"aed", "Unsupported Currency"},
+                {"JPY", "Amount Precision Exceeds Currency Minor Units"}};
+        int key = 0;
+        for (String[] row : refused) {
+            mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                            .header("x-idempotency-key", "IDEMP-CCY-" + key++)
+                            .contentType("application/json")
+                            .content(body("CONS-BULK-001", "fx.csv", content, sha256(content), row[0],
+                                    "PARTIAL_REJECTION")))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.message").value(row[1]));
+        }
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_file", Integer.class)).isZero();
+
+        String kwd = csv("INS-1," + IBAN + ",1.234", "INS-2," + IBAN + ",0.5");
+        MvcResult accepted = mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-CCY-KWD")
+                        .contentType("application/json")
+                        .content(body("CONS-BULK-001", "kwd.csv", kwd, sha256(kwd), "KWD", "PARTIAL_REJECTION")))
+                .andExpect(status().isAccepted())
+                .andReturn();
+        String fileId = json.readTree(accepted.getResponse().getContentAsString()).at("/Data/FilePaymentId").asText();
+        while (processor.processNextBatch() > 0) {
+            // drain
+        }
+
+        mvc.perform(asTpp(get("/open-finance/v1/file-payments/{id}/report", fileId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.Data.Items[0].Amount").value("1.234"))
+                .andExpect(jsonPath("$.Data.Items[0].Currency").value("KWD"))
+                .andExpect(jsonPath("$.Data.Items[1].Amount").value("0.500"));
+        assertThat(jdbc.queryForObject("select currency from " + SCHEMA + ".bulk_file where file_id = ?",
+                String.class, fileId)).isEqualTo("KWD");
+        JsonNode event = json.readTree(jdbc.queryForObject("select payload from " + SCHEMA + ".outbox_event"
+                + " where aggregate_id = ? and event_type = 'Payments.BulkFile.Accepted.v1'", String.class, fileId));
+        assertThat(event.at("/data/totalAmount").asText()).isEqualTo("1.734");
+        assertThat(event.at("/data/currency").asText()).isEqualTo("KWD");
+    }
+
+    @Test
     void partialAndFullRejectionModes() throws Exception {
         String mixed = csv("INS-1," + IBAN + ",10.00", "INS-2,AE000,10.00");
 
@@ -286,7 +333,7 @@ class BulkOrchestrationServiceIT {
         var done = files.findById(fileId).orElseThrow();
         assertThat(done.status().name()).isEqualTo("VALIDATED");
         assertThat(done.acceptedCount()).isEqualTo(1_200);
-        assertThat(done.acceptedAmount()).isEqualByComparingTo("1500.00");
+        assertThat(done.acceptedAmount()).isEqualTo(Money.of("1500.00", "AED"));
         assertThat(done.version()).isEqualTo(3L);
         // Items have not reached initiation-settlement, so no completion is published.
         assertThat(jdbc.queryForList("select event_type from " + SCHEMA + ".outbox_event where aggregate_id = ?",
@@ -297,7 +344,7 @@ class BulkOrchestrationServiceIT {
     void concurrentUploadsWithOneKeyCreateOneFile() throws Exception {
         String content = csv("INS-1," + IBAN + ",10.00");
         SubmitBulkFileCommand command = new SubmitBulkFileCommand("TPP-001", "CONS-BULK-001", "IDEMP-RACE",
-                "payroll.csv", content, sha256(content), BulkIntegrityMode.PARTIAL_REJECTION, "ix-race");
+                "payroll.csv", content, sha256(content), "AED", BulkIntegrityMode.PARTIAL_REJECTION, "ix-race");
         ExecutorService pool = Executors.newFixedThreadPool(4);
         CountDownLatch start = new CountDownLatch(1);
         try {
@@ -548,9 +595,21 @@ class BulkOrchestrationServiceIT {
     }
 
     private String body(String consentId, String fileName, String content, String hash, String mode) throws Exception {
-        return json.writeValueAsString(java.util.Map.of("Data", java.util.Map.of(
-                "ConsentId", consentId, "FileName", fileName, "FileContent", content,
-                "FileHash", hash, "IntegrityMode", mode)));
+        return body(consentId, fileName, content, hash, "AED", mode);
+    }
+
+    private String body(String consentId, String fileName, String content, String hash, String currency, String mode)
+            throws Exception {
+        java.util.Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("ConsentId", consentId);
+        data.put("FileName", fileName);
+        data.put("FileContent", content);
+        data.put("FileHash", hash);
+        if (currency != null) {
+            data.put("Currency", currency);
+        }
+        data.put("IntegrityMode", mode);
+        return json.writeValueAsString(java.util.Map.of("Data", data));
     }
 
     private static String csv(String... rows) {

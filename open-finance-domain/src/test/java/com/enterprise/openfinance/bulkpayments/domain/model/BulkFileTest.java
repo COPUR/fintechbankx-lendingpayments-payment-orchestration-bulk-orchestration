@@ -6,7 +6,6 @@ import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileRejected;
 import com.enterprise.openfinance.bulkpayments.domain.exception.BusinessRuleViolationException;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
@@ -37,7 +36,7 @@ class BulkFileTest {
             assertThat(event.totalCount()).isEqualTo(3);
             assertThat(event.acceptedCount()).isEqualTo(2);
             assertThat(event.rejectedCount()).isEqualTo(1);
-            assertThat(event.totalAmount()).isEqualByComparingTo("350.00");
+            assertThat(event.totalAmount()).isEqualTo(Money.of("350.00", "AED"));
             assertThat(event.integrityMode()).isEqualTo(BulkIntegrityMode.PARTIAL_REJECTION);
         });
         assertThat(file.pullDomainEvents()).isEmpty();
@@ -124,6 +123,18 @@ class BulkFileTest {
         assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 0, 1, 1, 0, "10.00", "10.00", UPLOADED, null, -1, "version");
     }
 
+    @Test
+    void amountsShareOneCurrency() {
+        BulkFile file = accept(parsed(1, 1, 0, "10.00", "10.00", BulkFileStatus.VALIDATED));
+        assertThat(file.currency()).isEqualTo(java.util.Currency.getInstance("AED"));
+
+        assertThatThrownBy(() -> BulkFile.rehydrate("FILE", "CONS", "TPP", "IDEMP", "hash", "file.csv",
+                BulkIntegrityMode.PARTIAL_REJECTION, BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 0, 1, 1, 0,
+                Money.of("10.00", "AED"), Money.of("10", "JPY"), UPLOADED, null, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("currency");
+    }
+
     private static BulkFile accept(ParsedBulkFile parsed) {
         return BulkFile.accept("FILE-001", "CONS-BULK-001", "TPP-001", "IDEMP-001", "hash-1", "payroll.csv",
                 BulkIntegrityMode.PARTIAL_REJECTION, parsed, UPLOADED);
@@ -141,11 +152,11 @@ class BulkFileTest {
         List<BulkItemResult> items = new java.util.ArrayList<>();
         for (int line = 1; line <= total; line++) {
             items.add(line <= accepted
-                    ? BulkItemResult.accepted(line, "INS-" + line, "AE120001000000000000000001", BigDecimal.TEN)
-                    : BulkItemResult.rejected(line, "INS-" + line, "AE000", BigDecimal.TEN, "Invalid IBAN"));
+                    ? BulkItemResult.accepted(line, "INS-" + line, "AE120001000000000000000001", Money.of("10", "AED"))
+                    : BulkItemResult.rejected(line, "INS-" + line, "AE000", Money.of("10", "AED"), "Invalid IBAN"));
         }
-        return new ParsedBulkFile(items, total, accepted, rejected, new BigDecimal(totalAmount),
-                new BigDecimal(acceptedAmount), target);
+        return new ParsedBulkFile(items, total, accepted, rejected, Money.of(totalAmount, "AED"),
+                Money.of(acceptedAmount, "AED"), target);
     }
 
     private static void assertInvalid(String fileId, BulkFileStatus status, BulkFileStatus targetStatus,
@@ -154,7 +165,7 @@ class BulkFileTest {
                                       Instant processedAt, long version, String expectedMessage) {
         assertThatThrownBy(() -> BulkFile.rehydrate(fileId, "CONS", "TPP", "IDEMP", "hash", "file.csv",
                 BulkIntegrityMode.PARTIAL_REJECTION, status, targetStatus, processedCount, totalCount, acceptedCount,
-                rejectedCount, new BigDecimal(totalAmount), new BigDecimal(acceptedAmount), createdAt, processedAt,
+                rejectedCount, Money.of(totalAmount, "AED"), Money.of(acceptedAmount, "AED"), createdAt, processedAt,
                 version))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(expectedMessage);

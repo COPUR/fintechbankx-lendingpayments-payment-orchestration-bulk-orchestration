@@ -12,6 +12,7 @@ import com.enterprise.openfinance.bulkpayments.domain.model.BulkConsentContext;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFile;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileReport;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileStatus;
+import com.enterprise.openfinance.bulkpayments.domain.model.Money;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkIdempotencyRecord;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkIntegrityMode;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkItemResult;
@@ -119,7 +120,7 @@ class BulkPaymentServiceTest {
         BulkFile done = status(service, upload.fileId());
         assertThat(done.status()).isEqualTo(BulkFileStatus.VALIDATED);
         assertThat(done.acceptedCount()).isEqualTo(4);
-        assertThat(done.acceptedAmount()).isEqualByComparingTo("120.00");
+        assertThat(done.acceptedAmount()).isEqualTo(Money.of("120.00", "AED"));
         assertThat(itemPort.processed.get(upload.fileId())).containsExactlyInAnyOrder(1, 2, 3, 4, 5);
         assertThat(publisher.published).singleElement().isInstanceOf(BulkFileAccepted.class);
     }
@@ -184,13 +185,33 @@ class BulkPaymentServiceTest {
 
         String content = validCsv("INS-1," + IBAN + ",10.00");
         assertThatThrownBy(() -> service.submitFile(new SubmitBulkFileCommand(
-                "TPP-001", "CONS-BULK-001", "IDEMP-202", "payroll.csv", content, "wrong-hash",
+                "TPP-001", "CONS-BULK-001", "IDEMP-202", "payroll.csv", content, "wrong-hash", "AED",
                 BulkIntegrityMode.PARTIAL_REJECTION, "ix-1")))
                 .isInstanceOf(BusinessRuleViolationException.class)
                 .hasMessageContaining("Integrity Failure");
 
         assertThat(filePort.data).isEmpty();
         assertThat(publisher.published).isEmpty();
+    }
+
+    @Test
+    void amountsUseTheRequestedCurrencyAndItsMinorUnits() {
+        BulkPaymentService service = service(settings(10));
+
+        BulkUploadResult kwd = service.submitFile(command("IDEMP-CUR-1",
+                validCsv("INS-1," + IBAN + ",1.234"), BulkIntegrityMode.PARTIAL_REJECTION, "KWD"));
+        assertThat(filePort.data.get(kwd.fileId()).totalAmount()).isEqualTo(Money.of("1.234", "KWD"));
+        assertThat(((BulkFileAccepted) publisher.published.get(0)).totalAmount()).isEqualTo(Money.of("1.234", "KWD"));
+
+        assertThatThrownBy(() -> service.submitFile(command("IDEMP-CUR-2",
+                validCsv("INS-1," + IBAN + ",10.5"), BulkIntegrityMode.PARTIAL_REJECTION, "JPY")))
+                .isInstanceOf(BusinessRuleViolationException.class)
+                .hasMessage("Amount Precision Exceeds Currency Minor Units");
+        assertThatThrownBy(() -> service.submitFile(command("IDEMP-CUR-3",
+                validCsv("INS-1," + IBAN + ",10.00"), BulkIntegrityMode.PARTIAL_REJECTION, "XAU")))
+                .isInstanceOf(BusinessRuleViolationException.class)
+                .hasMessage("Unsupported Currency");
+        assertThat(filePort.data).hasSize(1);
     }
 
     @Test
@@ -309,7 +330,7 @@ class BulkPaymentServiceTest {
 
     private static void assertForbidden(BulkPaymentService service, String consentId, String content, String message) {
         assertThatThrownBy(() -> service.submitFile(new SubmitBulkFileCommand("TPP-001", consentId,
-                "IDEMP-" + consentId, "payroll.csv", content, sha256(content), BulkIntegrityMode.PARTIAL_REJECTION,
+                "IDEMP-" + consentId, "payroll.csv", content, sha256(content), "AED", BulkIntegrityMode.PARTIAL_REJECTION,
                 "ix-1")))
                 .isInstanceOf(ForbiddenException.class)
                 .hasMessageContaining(message);
@@ -324,8 +345,13 @@ class BulkPaymentServiceTest {
     }
 
     private static SubmitBulkFileCommand command(String idempotencyKey, String content, BulkIntegrityMode mode) {
+        return command(idempotencyKey, content, mode, "AED");
+    }
+
+    private static SubmitBulkFileCommand command(String idempotencyKey, String content, BulkIntegrityMode mode,
+                                                 String currency) {
         return new SubmitBulkFileCommand("TPP-001", "CONS-BULK-001", idempotencyKey, "payroll.csv", content,
-                sha256(content), mode, "ix-1");
+                sha256(content), currency, mode, "ix-1");
     }
 
     private static String validCsv(String... rows) {

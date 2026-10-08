@@ -1,6 +1,5 @@
 package com.enterprise.openfinance.bulkpayments.domain.model;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -13,8 +12,8 @@ public record ParsedBulkFile(
         int totalCount,
         int acceptedCount,
         int rejectedCount,
-        BigDecimal totalAmount,
-        BigDecimal acceptedAmount,
+        Money totalAmount,
+        Money acceptedAmount,
         BulkFileStatus targetStatus
 ) {
 
@@ -31,7 +30,11 @@ public record ParsedBulkFile(
         if (totalAmount == null || totalAmount.signum() <= 0) {
             throw new IllegalArgumentException("totalAmount must be positive");
         }
-        if (acceptedAmount == null || acceptedAmount.signum() < 0 || acceptedAmount.compareTo(totalAmount) > 0) {
+        if (acceptedAmount == null || !acceptedAmount.currency().equals(totalAmount.currency())
+                || items.stream().anyMatch(item -> !item.amount().currency().equals(totalAmount.currency()))) {
+            throw new IllegalArgumentException("items and totals must share one currency");
+        }
+        if (acceptedAmount.signum() < 0 || acceptedAmount.isGreaterThan(totalAmount)) {
             throw new IllegalArgumentException("acceptedAmount must be between zero and totalAmount");
         }
         if (targetStatus == null || !targetStatus.isValidationFinished()) {

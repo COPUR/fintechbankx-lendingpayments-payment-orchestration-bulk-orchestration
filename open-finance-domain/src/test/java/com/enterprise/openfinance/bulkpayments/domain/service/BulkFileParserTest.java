@@ -5,7 +5,10 @@ import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileStatus;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkIntegrityMode;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkItemStatus;
 import com.enterprise.openfinance.bulkpayments.domain.model.ParsedBulkFile;
+import com.enterprise.openfinance.bulkpayments.domain.model.Money;
 import org.junit.jupiter.api.Test;
+
+import java.util.Currency;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -13,6 +16,40 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class BulkFileParserTest {
 
     private static final String GOOD_IBAN = "AE120001000000000000000001";
+    private static final Currency AED = Currency.getInstance("AED");
+    private static final Currency KWD = Currency.getInstance("KWD");
+    private static final Currency JPY = Currency.getInstance("JPY");
+
+    @Test
+    void everyAmountCarriesTheFileCurrency() {
+        ParsedBulkFile parsed = BulkFileParser.parse(csv("INS-1," + GOOD_IBAN + ",1500"), BulkIntegrityMode.PARTIAL_REJECTION, JPY);
+
+        assertThat(parsed.items().get(0).amount()).isEqualTo(Money.of("1500", "JPY"));
+        assertThat(parsed.totalAmount()).isEqualTo(Money.of("1500", "JPY"));
+        assertThat(parsed.acceptedAmount().currency()).isEqualTo(JPY);
+    }
+
+    @Test
+    void rejectsAmountsFinerThanTheCurrencyMinorUnit() {
+        assertThatThrownBy(() -> BulkFileParser.parse(csv("INS-1," + GOOD_IBAN + ",10.001"),
+                BulkIntegrityMode.PARTIAL_REJECTION, AED))
+                .isInstanceOf(BusinessRuleViolationException.class)
+                .hasMessage("Amount Precision Exceeds Currency Minor Units");
+        assertThatThrownBy(() -> BulkFileParser.parse(csv("INS-1," + GOOD_IBAN + ",10.5"),
+                BulkIntegrityMode.PARTIAL_REJECTION, JPY))
+                .isInstanceOf(BusinessRuleViolationException.class)
+                .hasMessage("Amount Precision Exceeds Currency Minor Units");
+    }
+
+    @Test
+    void currencyMustBeAnIso4217CodeWithMinorUnits() {
+        assertThat(BulkFileParser.currency("KWD")).isEqualTo(KWD);
+        for (String bad : new String[] {null, " ", "aed", "AEDX", "ZZZ", "XAU"}) {
+            assertThatThrownBy(() -> BulkFileParser.currency(bad))
+                    .isInstanceOf(BusinessRuleViolationException.class)
+                    .hasMessageStartingWith(bad == null || bad.isBlank() ? "Currency Required" : "Unsupported Currency");
+        }
+    }
 
     @Test
     void allValidItemsCompleteWithExactTotals() {
@@ -20,13 +57,13 @@ class BulkFileParserTest {
                 "INS-1," + GOOD_IBAN + ",10.00",
                 "",
                 "INS-2," + GOOD_IBAN + ",0.10",
-                "INS-3," + GOOD_IBAN + ",2500.255"), BulkIntegrityMode.PARTIAL_REJECTION);
+                "INS-3," + GOOD_IBAN + ",2500.255"), BulkIntegrityMode.PARTIAL_REJECTION, KWD);
 
         assertThat(parsed.totalCount()).isEqualTo(3);
         assertThat(parsed.acceptedCount()).isEqualTo(3);
         assertThat(parsed.rejectedCount()).isZero();
-        assertThat(parsed.totalAmount()).isEqualByComparingTo("2510.355");
-        assertThat(parsed.acceptedAmount()).isEqualByComparingTo("2510.355");
+        assertThat(parsed.totalAmount().amount()).isEqualByComparingTo("2510.355");
+        assertThat(parsed.acceptedAmount().amount()).isEqualByComparingTo("2510.355");
         assertThat(parsed.targetStatus()).isEqualTo(BulkFileStatus.VALIDATED);
         assertThat(parsed.items()).extracting("lineNumber").containsExactly(1, 2, 3);
     }
@@ -35,13 +72,13 @@ class BulkFileParserTest {
     void partialRejectionKeepsValidItemsAndCountsOnlyTheirAmount() {
         ParsedBulkFile parsed = BulkFileParser.parse(csv(
                 "INS-1," + GOOD_IBAN + ",10.00",
-                "INS-2,AE000,20.00"), BulkIntegrityMode.PARTIAL_REJECTION);
+                "INS-2,AE000,20.00"), BulkIntegrityMode.PARTIAL_REJECTION, AED);
 
         assertThat(parsed.targetStatus()).isEqualTo(BulkFileStatus.VALIDATED);
         assertThat(parsed.acceptedCount()).isEqualTo(1);
         assertThat(parsed.rejectedCount()).isEqualTo(1);
-        assertThat(parsed.totalAmount()).isEqualByComparingTo("30.00");
-        assertThat(parsed.acceptedAmount()).isEqualByComparingTo("10.00");
+        assertThat(parsed.totalAmount().amount()).isEqualByComparingTo("30.00");
+        assertThat(parsed.acceptedAmount().amount()).isEqualByComparingTo("10.00");
         assertThat(parsed.items().get(1).status()).isEqualTo(BulkItemStatus.REJECTED);
         assertThat(parsed.items().get(1).errorMessage()).isEqualTo("Invalid IBAN");
     }
@@ -50,19 +87,19 @@ class BulkFileParserTest {
     void fullRejectionRejectsEveryItemWhenOneIsInvalid() {
         ParsedBulkFile parsed = BulkFileParser.parse(csv(
                 "INS-1," + GOOD_IBAN + ",10.00",
-                "INS-2,AE000,20.00"), BulkIntegrityMode.FULL_REJECTION);
+                "INS-2,AE000,20.00"), BulkIntegrityMode.FULL_REJECTION, AED);
 
         assertThat(parsed.targetStatus()).isEqualTo(BulkFileStatus.REJECTED);
         assertThat(parsed.acceptedCount()).isZero();
         assertThat(parsed.rejectedCount()).isEqualTo(2);
-        assertThat(parsed.acceptedAmount()).isEqualByComparingTo("0");
+        assertThat(parsed.acceptedAmount().amount()).isEqualByComparingTo("0");
         assertThat(parsed.items()).extracting("errorMessage")
                 .containsExactly("Rejected due to full rejection mode", "Invalid IBAN");
     }
 
     @Test
     void fileWhereEveryIbanIsInvalidIsRejected() {
-        ParsedBulkFile parsed = BulkFileParser.parse(csv("INS-1,XX,10.00"), BulkIntegrityMode.PARTIAL_REJECTION);
+        ParsedBulkFile parsed = BulkFileParser.parse(csv("INS-1,XX,10.00"), BulkIntegrityMode.PARTIAL_REJECTION, AED);
 
         assertThat(parsed.targetStatus()).isEqualTo(BulkFileStatus.REJECTED);
     }
@@ -78,9 +115,9 @@ class BulkFileParserTest {
         assertSchemaFailure(csv("INS-1," + GOOD_IBAN + ",0.00"));
         assertSchemaFailure(csv("INS-1," + GOOD_IBAN + ",-5"));
 
-        assertThatThrownBy(() -> BulkFileParser.parse(csv(), BulkIntegrityMode.PARTIAL_REJECTION))
+        assertThatThrownBy(() -> BulkFileParser.parse(csv(), BulkIntegrityMode.PARTIAL_REJECTION, AED))
                 .isInstanceOf(BusinessRuleViolationException.class).hasMessage("Empty Payload");
-        assertThatThrownBy(() -> BulkFileParser.parse(csv("", " "), BulkIntegrityMode.PARTIAL_REJECTION))
+        assertThatThrownBy(() -> BulkFileParser.parse(csv("", " "), BulkIntegrityMode.PARTIAL_REJECTION, AED))
                 .isInstanceOf(BusinessRuleViolationException.class).hasMessage("Empty Payload");
     }
 
@@ -110,7 +147,7 @@ class BulkFileParserTest {
     }
 
     private static void assertSchemaFailure(String content) {
-        assertThatThrownBy(() -> BulkFileParser.parse(content, BulkIntegrityMode.PARTIAL_REJECTION))
+        assertThatThrownBy(() -> BulkFileParser.parse(content, BulkIntegrityMode.PARTIAL_REJECTION, AED))
                 .isInstanceOf(BusinessRuleViolationException.class)
                 .hasMessage("Schema Validation Failed");
     }

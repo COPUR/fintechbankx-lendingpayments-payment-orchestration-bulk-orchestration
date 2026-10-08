@@ -122,7 +122,8 @@ Local boot without Kafka: set `DB_URL`, `DB_USERNAME`, `SPRING_DATASOURCE_PASSWO
 (API on 8080, management on 8081).
 
 - Security: TPP-facing API, so DPoP is enforced (`Authorization: DPoP`, verified proof with a single-use jti, proof key = token `cnf.jkt`, `aud` = `svc-pay-bulk-orchestration`). Set `DPOP_REQUIRED=false` only for local runs with plain tokens.
-- Endpoints: `POST /open-finance/v1/file-payments`, `GET /open-finance/v1/file-payments/{fileId}`, `GET /open-finance/v1/file-payments/{fileId}/report`
+- Endpoints: `POST /open-finance/v1/file-payments`, `GET /open-finance/v1/file-payments/{fileId}`, `GET /open-finance/v1/file-payments/{fileId}/report` ([OpenAPI](./api/openapi/bulk-orchestration-service.yaml))
+- Money: the upload carries a required ISO 4217 `Currency` (the CSV `instruction_id,payee_iban,amount` has none). Amounts are kept and published at the currency's minor units and never rounded; a finer amount is 400.
 - Events contract: [AsyncAPI](./api/asyncapi/svc-pay-bulk-orchestration.yaml)
 - Deployment: [Helm chart](./deploy/helm/payment-bulk-orchestration-service), [Terraform](./deploy/terraform), [deployment notes](./docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md)
 - Migration: [runbook](./docs/migration/RUNBOOK-EXTRACT-pay-bulk-orchestration.md) (no backfill; catalog PR pending), [regression mapping](./docs/migration/REGRESSION_MAPPING.md)

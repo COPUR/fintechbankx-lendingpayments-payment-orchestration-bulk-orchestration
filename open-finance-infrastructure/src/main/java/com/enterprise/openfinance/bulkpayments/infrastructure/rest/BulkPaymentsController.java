@@ -63,6 +63,7 @@ public class BulkPaymentsController {
                 data.fileName(),
                 data.fileContent(),
                 data.fileHash(),
+                data.currency(),
                 BulkIntegrityMode.fromApiValue(data.integrityMode()),
                 interactionId
         );

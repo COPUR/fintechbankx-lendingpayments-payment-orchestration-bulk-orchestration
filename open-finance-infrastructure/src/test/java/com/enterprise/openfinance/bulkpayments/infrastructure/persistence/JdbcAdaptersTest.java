@@ -1,5 +1,6 @@
 package com.enterprise.openfinance.bulkpayments.infrastructure.persistence;
 
+import com.enterprise.openfinance.bulkpayments.domain.model.Money;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileStatus;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkIdempotencyRecord;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkItemResult;
@@ -37,7 +38,7 @@ class JdbcAdaptersTest {
     @Test
     void writesItemsInBoundedChunks() {
         List<BulkItemResult> items = IntStream.rangeClosed(1, 2_500)
-                .mapToObj(line -> BulkItemResult.accepted(line, "INS-" + line, "AE120001000000000000000001", BigDecimal.ONE))
+                .mapToObj(line -> BulkItemResult.accepted(line, "INS-" + line, "AE120001000000000000000001", Money.of("1", "AED")))
                 .toList();
 
         new JdbcBulkItemAdapter(jdbc).saveAll("FILE-1", items);
@@ -66,12 +67,13 @@ class JdbcAdaptersTest {
         when(rs.getString("instruction_id")).thenReturn("INS-7");
         when(rs.getString("payee_iban")).thenReturn("AE000");
         when(rs.getBigDecimal("amount")).thenReturn(new BigDecimal("12.5000"));
+        when(rs.getString("currency")).thenReturn("AED");
         when(rs.getString("status")).thenReturn("REJECTED");
         when(rs.getString("error_message")).thenReturn("Invalid IBAN");
         BulkItemResult item = mapper.getValue().mapRow(rs, 0);
         assertThat(item.lineNumber()).isEqualTo(7);
         assertThat(item.status()).isEqualTo(BulkItemStatus.REJECTED);
-        assertThat(item.amount()).isEqualByComparingTo("12.5");
+        assertThat(item.amount()).isEqualTo(Money.of("12.50", "AED"));
         assertThat(item.errorMessage()).isEqualTo("Invalid IBAN");
     }
 

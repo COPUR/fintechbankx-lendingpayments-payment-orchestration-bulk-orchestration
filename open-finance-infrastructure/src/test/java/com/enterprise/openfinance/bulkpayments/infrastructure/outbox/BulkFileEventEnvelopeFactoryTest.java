@@ -4,11 +4,11 @@ import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileAccepted;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileRejected;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileStatus;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkIntegrityMode;
+import com.enterprise.openfinance.bulkpayments.domain.model.Money;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -25,7 +25,7 @@ class BulkFileEventEnvelopeFactoryTest {
     void acceptedEventEnvelope() throws Exception {
         UUID eventId = UUID.randomUUID();
         OutboxEventJpaEntity row = factory.toOutboxRow(new BulkFileAccepted(eventId, "FILE-1", 0L, AT, "CONS-1",
-                "TPP-001", BulkIntegrityMode.PARTIAL_REJECTION, 3, 2, 1, new BigDecimal("350")), "ix-1");
+                "TPP-001", BulkIntegrityMode.PARTIAL_REJECTION, 3, 2, 1, Money.of("350", "AED")), "ix-1");
 
         assertThat(row.getTopic()).isEqualTo("evt.pay.bulk.accepted.v1");
         assertThat(row.getEventType()).isEqualTo("Payments.BulkFile.Accepted.v1");
@@ -50,6 +50,7 @@ class BulkFileEventEnvelopeFactoryTest {
         assertThat(data.get("integrityMode").asText()).isEqualTo("PARTIAL_REJECTION");
         assertThat(data.get("totalCount").asInt()).isEqualTo(3);
         assertThat(data.get("totalAmount").asText()).isEqualTo("350.00");
+        assertThat(data.get("currency").asText()).isEqualTo("AED");
         assertThat(data.has("payeeIban")).isFalse();
     }
 
@@ -67,7 +68,7 @@ class BulkFileEventEnvelopeFactoryTest {
     void topicEventSegmentEqualsTheEventTypeEvent() {
         List<OutboxEventJpaEntity> rows = List.of(
                 factory.toOutboxRow(new BulkFileAccepted(UUID.randomUUID(), "F", 0L, AT, "C", "T",
-                        BulkIntegrityMode.FULL_REJECTION, 1, 1, 0, BigDecimal.ONE), "F"),
+                        BulkIntegrityMode.FULL_REJECTION, 1, 1, 0, Money.of("1", "AED")), "F"),
                 factory.toOutboxRow(new BulkFileRejected(UUID.randomUUID(), "F", 1L, AT, 1, 1), "F"));
 
         for (OutboxEventJpaEntity row : rows) {
@@ -81,10 +82,13 @@ class BulkFileEventEnvelopeFactoryTest {
     }
 
     @Test
-    void amountsKeepAtLeastTwoDecimalsWithoutRounding() {
-        assertThat(BulkFileEventEnvelopeFactory.amount(new BigDecimal("10"))).isEqualTo("10.00");
-        assertThat(BulkFileEventEnvelopeFactory.amount(new BigDecimal("0.1"))).isEqualTo("0.10");
-        assertThat(BulkFileEventEnvelopeFactory.amount(new BigDecimal("10.0001"))).isEqualTo("10.0001");
-        assertThat(BulkFileEventEnvelopeFactory.amount(new BigDecimal("1E+3"))).isEqualTo("1000.00");
+    void amountsAreWrittenAtTheCurrencyMinorUnits() throws Exception {
+        for (String[] c : new String[][] {{"1500", "JPY", "1500"}, {"1.234", "KWD", "1.234"}, {"10", "AED", "10.00"}}) {
+            OutboxEventJpaEntity row = factory.toOutboxRow(new BulkFileAccepted(UUID.randomUUID(), "F", 0L, AT, "C",
+                    "T", BulkIntegrityMode.PARTIAL_REJECTION, 1, 1, 0, Money.of(c[0], c[1])), "F");
+            JsonNode data = json.readTree(row.getPayload()).get("data");
+            assertThat(data.get("totalAmount").asText()).isEqualTo(c[2]);
+            assertThat(data.get("currency").asText()).isEqualTo(c[1]);
+        }
     }
 }

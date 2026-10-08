@@ -1,12 +1,11 @@
 package com.enterprise.openfinance.bulkpayments.domain.model;
 
-import java.math.BigDecimal;
 
 public record BulkItemResult(
         int lineNumber,
         String instructionId,
         String payeeIban,
-        BigDecimal amount,
+        Money amount,
         BulkItemStatus status,
         String errorMessage
 ) {
@@ -36,14 +35,14 @@ public record BulkItemResult(
     public static BulkItemResult accepted(int lineNumber,
                                           String instructionId,
                                           String payeeIban,
-                                          BigDecimal amount) {
+                                          Money amount) {
         return new BulkItemResult(lineNumber, instructionId, payeeIban, amount, BulkItemStatus.ACCEPTED, null);
     }
 
     public static BulkItemResult rejected(int lineNumber,
                                           String instructionId,
                                           String payeeIban,
-                                          BigDecimal amount,
+                                          Money amount,
                                           String errorMessage) {
         return new BulkItemResult(lineNumber, instructionId, payeeIban, amount, BulkItemStatus.REJECTED, errorMessage);
     }

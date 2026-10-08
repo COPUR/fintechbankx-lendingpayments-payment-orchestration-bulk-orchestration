@@ -4,6 +4,7 @@ import com.enterprise.openfinance.bulkpayments.domain.exception.BusinessRuleViol
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileStatus;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkIntegrityMode;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkItemResult;
+import com.enterprise.openfinance.bulkpayments.domain.model.Money;
 import com.enterprise.openfinance.bulkpayments.domain.model.ParsedBulkFile;
 
 import java.math.BigDecimal;
@@ -12,11 +13,13 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Currency;
 import java.util.List;
 
 /**
  * Domain service holding the file rules: payload size, integrity hash, CSV
- * schema ({@code instruction_id,payee_iban,amount}), per-item validation and
+ * schema ({@code instruction_id,payee_iban,amount}), the file currency and its
+ * minor units (from the request; the CSV has no currency column), per-item validation and
  * the integrity mode. A structural error rejects the whole upload; an item
  * that fails validation is kept as a rejected item.
  */
@@ -45,7 +48,27 @@ public final class BulkFileParser {
         }
     }
 
-    public static ParsedBulkFile parse(String fileContent, BulkIntegrityMode mode) {
+    /** The file currency: an ISO 4217 code (upper case) whose minor units are defined. */
+    public static Currency currency(String code) {
+        if (code == null || code.isBlank()) {
+            throw new BusinessRuleViolationException("Currency Required");
+        }
+        if (!code.matches("[A-Z]{3}")) {
+            throw new BusinessRuleViolationException("Unsupported Currency");
+        }
+        Currency currency;
+        try {
+            currency = Currency.getInstance(code);
+        } catch (IllegalArgumentException exception) {
+            throw new BusinessRuleViolationException("Unsupported Currency");
+        }
+        if (currency.getDefaultFractionDigits() < 0) {
+            throw new BusinessRuleViolationException("Unsupported Currency");
+        }
+        return currency;
+    }
+
+    public static ParsedBulkFile parse(String fileContent, BulkIntegrityMode mode, Currency currency) {
         String[] lines = fileContent.split("\\r?\\n");
         if (lines.length < 2) {
             throw new BusinessRuleViolationException("Empty Payload");
@@ -57,8 +80,8 @@ public final class BulkFileParser {
         List<BulkItemResult> items = new ArrayList<>(lines.length - 1);
         int accepted = 0;
         int rejected = 0;
-        BigDecimal totalAmount = BigDecimal.ZERO;
-        BigDecimal acceptedAmount = BigDecimal.ZERO;
+        Money totalAmount = Money.zero(currency);
+        Money acceptedAmount = Money.zero(currency);
 
         int logicalLine = 0;
         for (int i = 1; i < lines.length; i++) {
@@ -73,7 +96,7 @@ public final class BulkFileParser {
             }
             String instructionId = columns[0].trim();
             String payeeIban = columns[1].trim();
-            BigDecimal amount = parseAmount(columns[2].trim());
+            Money amount = parseAmount(columns[2].trim(), currency);
             if (instructionId.isBlank() || payeeIban.isBlank()) {
                 throw new BusinessRuleViolationException("Schema Validation Failed");
             }
@@ -99,7 +122,7 @@ public final class BulkFileParser {
                     .map(item -> BulkItemResult.rejected(item.lineNumber(), item.instructionId(), item.payeeIban(),
                             item.amount(), item.errorMessage() == null ? FULL_REJECTION_REASON : item.errorMessage()))
                     .toList();
-            return new ParsedBulkFile(allRejected, totalCount, 0, totalCount, totalAmount, BigDecimal.ZERO,
+            return new ParsedBulkFile(allRejected, totalCount, 0, totalCount, totalAmount, Money.zero(currency),
                     BulkFileStatus.REJECTED);
         }
 
@@ -107,7 +130,7 @@ public final class BulkFileParser {
         return new ParsedBulkFile(items, totalCount, accepted, rejected, totalAmount, acceptedAmount, targetStatus);
     }
 
-    private static BigDecimal parseAmount(String raw) {
+    private static Money parseAmount(String raw, Currency currency) {
         if (raw.isBlank()) {
             throw new BusinessRuleViolationException("Schema Validation Failed");
         }
@@ -120,7 +143,10 @@ public final class BulkFileParser {
         if (amount.signum() <= 0) {
             throw new BusinessRuleViolationException("Schema Validation Failed");
         }
-        return amount;
+        if (amount.stripTrailingZeros().scale() > currency.getDefaultFractionDigits()) {
+            throw new BusinessRuleViolationException("Amount Precision Exceeds Currency Minor Units");
+        }
+        return new Money(amount, currency);
     }
 
     static boolean isLikelyIban(String value) {

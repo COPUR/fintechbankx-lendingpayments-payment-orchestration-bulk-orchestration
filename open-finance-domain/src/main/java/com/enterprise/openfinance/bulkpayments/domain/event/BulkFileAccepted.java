@@ -2,7 +2,7 @@ package com.enterprise.openfinance.bulkpayments.domain.event;
 
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkIntegrityMode;
 
-import java.math.BigDecimal;
+import com.enterprise.openfinance.bulkpayments.domain.model.Money;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -19,7 +19,7 @@ public record BulkFileAccepted(
         int totalCount,
         int acceptedCount,
         int rejectedCount,
-        BigDecimal totalAmount
+        Money totalAmount
 ) implements BulkFileEvent {
 
     public BulkFileAccepted {

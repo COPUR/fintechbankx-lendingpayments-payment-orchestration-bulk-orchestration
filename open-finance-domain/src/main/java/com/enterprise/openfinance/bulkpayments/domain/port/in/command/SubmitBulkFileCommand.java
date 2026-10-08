@@ -9,6 +9,7 @@ public record SubmitBulkFileCommand(
         String fileName,
         String fileContent,
         String fileHash,
+        String currency,
         BulkIntegrityMode integrityMode,
         String interactionId
 ) {
@@ -32,6 +33,9 @@ public record SubmitBulkFileCommand(
         if (isBlank(fileHash)) {
             throw new IllegalArgumentException("fileHash is required");
         }
+        if (isBlank(currency)) {
+            throw new IllegalArgumentException("currency is required");
+        }
         if (integrityMode == null) {
             throw new IllegalArgumentException("integrityMode is required");
         }
@@ -45,11 +49,12 @@ public record SubmitBulkFileCommand(
         fileName = fileName.trim();
         fileContent = fileContent.trim();
         fileHash = fileHash.trim();
+        currency = currency.trim();
         interactionId = interactionId.trim();
     }
 
     public String requestHash() {
-        return consentId + '|' + fileName + '|' + fileHash + '|' + integrityMode.name();
+        return consentId + '|' + fileName + '|' + fileHash + '|' + currency + '|' + integrityMode.name();
     }
 
     private static boolean isBlank(String value) {

@@ -26,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Currency;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -72,6 +73,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
     public BulkUploadResult submitFile(SubmitBulkFileCommand command) {
         Instant now = Instant.now(clock);
         validateConsent(command.consentId(), command.tppId(), now);
+        Currency currency = BulkFileParser.currency(command.currency());
         BulkFileParser.verifyPayload(command.fileContent(), settings.maxFileSizeBytes());
         BulkFileParser.verifyHash(command.fileContent(), command.fileHash());
 
@@ -80,7 +82,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
             return replay.orElseThrow();
         }
 
-        ParsedBulkFile parsed = BulkFileParser.parse(command.fileContent(), command.integrityMode());
+        ParsedBulkFile parsed = BulkFileParser.parse(command.fileContent(), command.integrityMode(), currency);
         BulkFile file = BulkFile.accept("FILE-BULK-" + UUID.randomUUID(), command.consentId(), command.tppId(),
                 command.idempotencyKey(), command.requestHash(), command.fileName(), command.integrityMode(),
                 parsed, now);

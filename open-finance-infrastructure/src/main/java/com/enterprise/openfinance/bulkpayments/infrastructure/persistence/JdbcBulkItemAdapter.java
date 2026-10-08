@@ -2,6 +2,7 @@ package com.enterprise.openfinance.bulkpayments.infrastructure.persistence;
 
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkItemResult;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkItemStatus;
+import com.enterprise.openfinance.bulkpayments.domain.model.Money;
 import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkItemPort;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Repository;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Collection;
+import java.util.Currency;
 import java.util.List;
 
 /**
@@ -25,13 +27,15 @@ public class JdbcBulkItemAdapter implements BulkItemPort {
     static final int WRITE_CHUNK = 1_000;
 
     private static final String COLUMNS =
-            "line_number, instruction_id, payee_iban, amount, status, error_message";
+            "i.line_number, i.instruction_id, i.payee_iban, i.amount, i.status, i.error_message, f.currency";
+
+    private static final String FROM = " from bulk_item i join bulk_file f on f.file_id = i.file_id";
 
     private static final RowMapper<BulkItemResult> ROW_MAPPER = (rs, rowNum) -> new BulkItemResult(
             rs.getInt("line_number"),
             rs.getString("instruction_id"),
             rs.getString("payee_iban"),
-            rs.getBigDecimal("amount"),
+            new Money(rs.getBigDecimal("amount"), Currency.getInstance(rs.getString("currency"))),
             BulkItemStatus.valueOf(rs.getString("status")),
             rs.getString("error_message"));
 
@@ -51,7 +55,7 @@ public class JdbcBulkItemAdapter implements BulkItemPort {
                             .addValue("lineNumber", item.lineNumber())
                             .addValue("instructionId", item.instructionId())
                             .addValue("payeeIban", item.payeeIban())
-                            .addValue("amount", item.amount())
+                            .addValue("amount", item.amount().amount())
                             .addValue("status", item.status().name())
                             .addValue("errorMessage", item.errorMessage()))
                     .toArray(SqlParameterSource[]::new);
@@ -64,14 +68,14 @@ public class JdbcBulkItemAdapter implements BulkItemPort {
 
     @Override
     public List<BulkItemResult> findByFileId(String fileId) {
-        return jdbc.query("select " + COLUMNS + " from bulk_item where file_id = :fileId order by line_number",
+        return jdbc.query("select " + COLUMNS + FROM + " where i.file_id = :fileId order by i.line_number",
                 new MapSqlParameterSource("fileId", fileId), ROW_MAPPER);
     }
 
     @Override
     public List<BulkItemResult> findUnprocessed(String fileId, int limit) {
-        return jdbc.query("select " + COLUMNS + " from bulk_item where file_id = :fileId and processed_at is null"
-                        + " order by line_number limit :limit",
+        return jdbc.query("select " + COLUMNS + FROM + " where i.file_id = :fileId and i.processed_at is null"
+                        + " order by i.line_number limit :limit",
                 new MapSqlParameterSource("fileId", fileId).addValue("limit", limit), ROW_MAPPER);
     }
 

@@ -3,11 +3,10 @@ package com.enterprise.openfinance.bulkpayments.infrastructure.outbox;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileAccepted;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileEvent;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileRejected;
+import com.enterprise.openfinance.bulkpayments.domain.model.Money;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -15,7 +14,8 @@ import java.util.Map;
  * Turns BulkFile domain events into the public envelope of
  * api/asyncapi/svc-pay-bulk-orchestration.yaml: topic
  * evt.pay.bulk.&lt;event&gt;.v1, eventType Payments.BulkFile.&lt;Event&gt;.v1,
- * amounts as decimal strings, ids and counts only (no payee IBANs).
+ * amounts as decimal strings at the currency's minor units plus the ISO 4217
+ * currency code, ids and counts only (no payee IBANs).
  */
 public class BulkFileEventEnvelopeFactory {
 
@@ -56,7 +56,8 @@ public class BulkFileEventEnvelopeFactory {
                     "totalCount", e.totalCount(),
                     "acceptedCount", e.acceptedCount(),
                     "rejectedCount", e.rejectedCount(),
-                    "totalAmount", amount(e.totalAmount())));
+                    "totalAmount", amount(e.totalAmount()),
+                    "currency", e.totalAmount().currency().getCurrencyCode()));
             case BulkFileRejected e -> new PublicEvent("rejected", "Rejected", data(
                     "fileId", e.fileId(),
                     "totalCount", e.totalCount(),
@@ -65,10 +66,9 @@ public class BulkFileEventEnvelopeFactory {
         };
     }
 
-    /** Decimal string with at least two decimals and no precision lost: 10 -> "10.00", 2510.355 -> "2510.355". */
-    static String amount(BigDecimal value) {
-        int scale = Math.max(2, value.stripTrailingZeros().scale());
-        return value.setScale(scale, RoundingMode.UNNECESSARY).toPlainString();
+    /** Decimal string at the currency's minor units: JPY 1500 -> "1500", KWD 1.234 -> "1.234", AED 10 -> "10.00". */
+    static String amount(Money value) {
+        return value.toPlainString();
     }
 
     private static Map<String, Object> data(Object... keyValues) {

@@ -3,6 +3,9 @@ package com.enterprise.openfinance.bulkpayments.infrastructure.persistence;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFile;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileStatus;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkIntegrityMode;
+import com.enterprise.openfinance.bulkpayments.domain.model.Money;
+
+import java.util.Currency;
 
 /** Maps the BulkFile aggregate to its table row and back; the domain never sees JPA types. */
 public final class BulkFilePersistenceMapper {
@@ -14,7 +17,8 @@ public final class BulkFilePersistenceMapper {
         BulkFileJpaEntity entity = new BulkFileJpaEntity(file.fileId(), file.consentId(), file.tppId(),
                 file.idempotencyKey(), file.requestHash(), file.fileName(), file.integrityMode().name(),
                 file.targetStatus().name(), file.totalCount(), file.acceptedCount(), file.rejectedCount(),
-                file.totalAmount(), file.acceptedAmount(), file.createdAt());
+                file.totalAmount().amount(), file.acceptedAmount().amount(), file.currency().getCurrencyCode(),
+                file.createdAt());
         copyProgress(file, entity);
         return entity;
     }
@@ -29,7 +33,12 @@ public final class BulkFilePersistenceMapper {
                 BulkIntegrityMode.valueOf(entity.getIntegrityMode()), BulkFileStatus.valueOf(entity.getStatus()),
                 BulkFileStatus.valueOf(entity.getTargetStatus()), entity.getProcessedCount(),
                 entity.getTotalCount(), entity.getAcceptedCount(), entity.getRejectedCount(),
-                entity.getTotalAmount(), entity.getAcceptedAmount(), entity.getCreatedAt(), entity.getProcessedAt(),
+                new Money(entity.getTotalAmount(), currency(entity)),
+                new Money(entity.getAcceptedAmount(), currency(entity)), entity.getCreatedAt(), entity.getProcessedAt(),
                 entity.getVersion());
+    }
+
+    private static Currency currency(BulkFileJpaEntity entity) {
+        return Currency.getInstance(entity.getCurrency());
     }
 }

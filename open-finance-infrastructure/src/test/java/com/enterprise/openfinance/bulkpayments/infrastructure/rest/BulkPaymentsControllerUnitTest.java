@@ -1,5 +1,6 @@
 package com.enterprise.openfinance.bulkpayments.infrastructure.rest;
 
+import com.enterprise.openfinance.bulkpayments.domain.model.Money;
 import com.enterprise.openfinance.bulkpayments.domain.port.in.command.SubmitBulkFileCommand;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFile;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileReport;
@@ -77,6 +78,32 @@ class BulkPaymentsControllerUnitTest {
         assertThat(upload.getHeaders().getFirst("X-OF-Idempotency")).isEqualTo("MISS");
         assertThat(status.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(report.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    void passesTheRequestCurrencyAndShowsItemAmountsAtTheCurrencyMinorUnits() {
+        BulkPaymentUseCase useCase = Mockito.mock(BulkPaymentUseCase.class);
+        BulkPaymentsController controller = new BulkPaymentsController(useCase);
+        Mockito.when(useCase.submitFile(Mockito.any(SubmitBulkFileCommand.class))).thenReturn(new BulkUploadResult(
+                "FILE-001", BulkFileStatus.PROCESSING, "ix-1", false, 1, 0, Instant.parse("2026-02-09T10:00:00Z")));
+        Mockito.when(useCase.getFileReport(Mockito.any())).thenReturn(Optional.of(new BulkFileReport("FILE-002",
+                BulkFileStatus.VALIDATED, 2, 2, 0, List.of(
+                        BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", Money.of("1.234", "KWD")),
+                        BulkItemResult.accepted(2, "INS-2", "AE120001000000000000000001", Money.of("0.5", "KWD"))),
+                Instant.parse("2026-02-09T10:00:02Z"))));
+
+        controller.uploadFile("DPoP token", "proof", "ix-1", "TPP-001", "IDEMP-001",
+                fileRequest("CONS-BULK-001", "payroll.csv", "content", "hash", "PARTIAL_REJECTION"));
+        ResponseEntity<BulkFileReportResponse> report = controller.getFileReport("DPoP token", "proof", "ix-1",
+                "TPP-001", "FILE-002", null);
+
+        org.mockito.ArgumentCaptor<SubmitBulkFileCommand> command = org.mockito.ArgumentCaptor.forClass(SubmitBulkFileCommand.class);
+        Mockito.verify(useCase).submitFile(command.capture());
+        assertThat(command.getValue().currency()).isEqualTo("AED");
+        assertThat(report.getBody().data().items()).extracting(BulkFileReportResponse.Item::amount)
+                .containsExactly("1.234", "0.500");
+        assertThat(report.getBody().data().items()).extracting(BulkFileReportResponse.Item::currency)
+                .containsOnly("KWD");
     }
 
     @Test
@@ -164,8 +191,8 @@ class BulkPaymentsControllerUnitTest {
                 2,
                 1,
                 1,
-                new BigDecimal("20.00"),
-                new BigDecimal("10.00"),
+                Money.of("20.00", "AED"),
+                Money.of("10.00", "AED"),
                 Instant.parse("2026-02-09T10:00:00Z"),
                 processedAt,
                 0L
@@ -180,8 +207,8 @@ class BulkPaymentsControllerUnitTest {
                 1,
                 1,
                 List.of(
-                        BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", new BigDecimal("10.00")),
-                        BulkItemResult.rejected(2, "INS-2", "AE000", new BigDecimal("10.00"), "Invalid IBAN")
+                        BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", Money.of("10.00", "AED")),
+                        BulkItemResult.rejected(2, "INS-2", "AE000", Money.of("10.00", "AED"), "Invalid IBAN")
                 ),
                 Instant.parse("2026-02-09T10:00:02Z")
         );
@@ -197,6 +224,7 @@ class BulkPaymentsControllerUnitTest {
                 fileName,
                 fileContent,
                 fileHash,
+                "AED",
                 integrityMode
         ));
     }

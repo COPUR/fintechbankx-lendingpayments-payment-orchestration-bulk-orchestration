@@ -1,5 +1,6 @@
 package com.enterprise.openfinance.bulkpayments.infrastructure.persistence;
 
+import com.enterprise.openfinance.bulkpayments.domain.model.Money;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFile;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileStatus;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkIntegrityMode;
@@ -40,8 +41,9 @@ class BulkFilePersistenceMapperTest {
         assertThat(back.totalCount()).isEqualTo(2);
         assertThat(back.acceptedCount()).isEqualTo(1);
         assertThat(back.rejectedCount()).isEqualTo(1);
-        assertThat(back.totalAmount()).isEqualByComparingTo("30.00");
-        assertThat(back.acceptedAmount()).isEqualByComparingTo("10.00");
+        assertThat(entity.getCurrency()).isEqualTo("AED");
+        assertThat(back.totalAmount()).isEqualTo(Money.of("30.00", "AED"));
+        assertThat(back.acceptedAmount()).isEqualTo(Money.of("10.00", "AED"));
         assertThat(back.createdAt()).isEqualTo(AT);
         assertThat(back.processedAt()).isNull();
         assertThat(back.version()).isZero();
@@ -64,9 +66,9 @@ class BulkFilePersistenceMapperTest {
 
     static BulkFile newFile() {
         ParsedBulkFile parsed = new ParsedBulkFile(List.of(
-                BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", new BigDecimal("10.00")),
-                BulkItemResult.rejected(2, "INS-2", "AE000", new BigDecimal("20.00"), "Invalid IBAN")),
-                2, 1, 1, new BigDecimal("30.00"), new BigDecimal("10.00"), BulkFileStatus.VALIDATED);
+                BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", Money.of("10.00", "AED")),
+                BulkItemResult.rejected(2, "INS-2", "AE000", Money.of("20.00", "AED"), "Invalid IBAN")),
+                2, 1, 1, Money.of("30.00", "AED"), Money.of("10.00", "AED"), BulkFileStatus.VALIDATED);
         return BulkFile.accept("FILE-1", "CONS-1", "TPP-001", "IDEMP-1", "hash", "payroll.csv",
                 BulkIntegrityMode.FULL_REJECTION, parsed, AT);
     }
