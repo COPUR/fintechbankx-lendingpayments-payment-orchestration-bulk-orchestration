@@ -1,38 +1,111 @@
 # Runbook: extract bulk payments from the monolith (svc-pay-bulk-orchestration)
 
+Template: adr-runbooks `docs/transformation-outputs/migration-runbook-template.md`.
+
+## Document Control
+
+- Runbook ID: `RUNBOOK-EXTRACT-pay-bulk-orchestration`
+- Version: `v1.1` (Proposed)
+- Owner Squad: Lending & Payments, bulk payments (service owner of `svc-pay-bulk-orchestration`)
+- Change Window: to be agreed with the owner squad and the gateway owners; uploads are frozen during cutover
+- Risk Tier: `High` (TPP-facing payment initiation API, new consent rules, first deployment of this service)
+
 Status: **Proposed**. Nothing here has been executed against a shared environment.
 
-## 1. Data: no backfill
-The monolith (`open-finance-context`, package `bulkpayments`) kept files, items, reports and
-idempotency keys in memory only. It had no table and no Flyway migration for them, so there is
-nothing to copy. Files that are in flight in the monolith at cutover are lost when it restarts, as
-they always were. Tell TPPs to re-poll or re-upload; the idempotency key is new in this service.
+## 1. Objective
 
-## 2. Infrastructure (platform squad, reviewed plan only)
-1. `deploy/terraform`: copy `environments/<env>.tfvars.example`, then `terraform plan`. Review it before
-   anyone applies. It creates Aurora PostgreSQL (`db_pay_bulk_orchestration_<env>`), a KMS key tagged
-   `fintechbankx.io/secrets=true`, the app DB secret, `<env>/payment-bulk-orchestration-service/oidc-client`,
-   the IRSA role and the inline MSK policy scoped to `evt.pay.bulk.*`.
-   (TODO: switch to the msk-client-access module when it exists on main.)
-2. Identity: create Keycloak client `svc-pay-bulk-orchestration` in realm `fintechbankx`
-   (client credentials, audience mapper with the same value). Put its secret in the oidc-client secret
-   under `client_secret`.
-3. The consent service must allow this client. See section 5.
+Move the corporate bulk payment API (`POST /open-finance/v1/file-payments`, `GET .../{fileId}`,
+`GET .../{fileId}/report`) from the monolith (`open-finance-context`, package `bulkpayments`) to
+`svc-pay-bulk-orchestration` in namespace `payments`, service account `payment-bulk-orchestration-service`.
 
-## 3. Deploy
-`helm upgrade --install payment-bulk-orchestration-service deploy/helm/payment-bulk-orchestration-service -n payments -f values-<env>.yaml`
-with `image.tag`, `config.DB_URL`, `config.KAFKA_BOOTSTRAP_SERVERS`, `config.OIDC_*`,
-`externalSecret.remoteSecretName` and `externalSecret.serviceClientSecretName` set. A missing
-required value fails the render. Flyway creates `sc_pay_bulk_orchestration` on first start.
+In scope: the upload, validation, bounded-batch processing, status and report; the consent check against
+consent-authorization-service; the events `evt.pay.bulk.accepted.v1` and `evt.pay.bulk.rejected.v1`.
 
-## 4. Events: relay stays off until the topics exist
-`OUTBOX_RELAY_ENABLED=false` by default. Events accumulate in `outbox_event` (gauge
-`outbox_pending_events`). The catalog PR for `evt.pay.bulk.accepted.v1`,
-`evt.pay.bulk.completed.v1` (contract only, not emitted yet) and `evt.pay.bulk.rejected.v1` (AsyncAPI
-`api/asyncapi/svc-pay-bulk-orchestration.yaml`) is **pending**. After it merges and the platform creates the topics
-(the service never auto-creates them), set `OUTBOX_RELAY_ENABLED=true`.
+Out of scope: handing items to svc-pay-initiation-settlement (not built; files end in `Validated`, nothing is
+paid, `evt.pay.bulk.completed.v1` is not emitted), data migration (none, see section 2).
 
-Relay failure policy (ADR-021 decision 4, adr-runbooks #10 at 421f7b5 and the ruling e6dd76a):
+Data: no backfill. The monolith kept files, items, reports and idempotency keys in memory only, with no table
+and no migration, so there is nothing to copy.
+
+## 2. Preconditions
+
+General (template):
+1. Source and target repositories exist and are accessible.
+2. The target repo has `main/dev/staging` protections enabled.
+3. Required CI checks are green (`./gradlew clean check` with `TEST_DB_URL`, the deployability gates).
+4. OpenAPI (`api/openapi/bulk-orchestration-service.yaml`) and AsyncAPI
+   (`api/asyncapi/svc-pay-bulk-orchestration.yaml`) are reviewed; the AsyncAPI catalog copy (asyncapi-catalog
+   PR #13) is merged.
+5. Rollback tags exist for the monolith release and for this service's first release.
+
+Cross-repo prerequisites, in this order (each must be done before the next starts):
+
+1. **consent-auth**: `GET /api/v1/consents/{id}` (ConsentServiceView with `usable`, scopes such as
+   `INITIATEBULKPAYMENTS`) is merged and deployed by the consent owner, and its service-caller allow-list
+   (`openfinance.consent.service-callers`) contains this service's client.
+2. **Keycloak** (realm `fintechbankx`): confidential client `svc-pay-bulk-orchestration`, client credentials,
+   realm role `service`, audiences `svc-pay-bulk-orchestration` and `svc-of-consent-authorization`. Its secret
+   goes into `<env>/payment-bulk-orchestration-service/oidc-client` under `client_secret`.
+3. **Mesh team** (request explicitly; the chart ships no Istio policy):
+   - (a) gateway route `/open-finance/v1/file-payments/**` to this service. The route must pass
+     `Authorization: DPoP ...` and the `DPoP` header unchanged and set `X-Forwarded-Proto/Host/Prefix` to the
+     public URL (the DPoP `htu` is checked against it);
+   - (b) ServiceEntry / egress for the datastores `[aurora-postgresql, msk]` under the REGISTRY_ONLY outbound
+     policy (without it the DB readiness check fails and the relay cannot reach the brokers);
+   - (c) callee ALLOW rules: inbound to this service on 8080 from
+     `cluster.local/ns/istio-ingress/sa/istio-ingressgateway`; inbound to consent-authorization-service from
+     `cluster.local/ns/payments/sa/payment-bulk-orchestration-service`.
+4. **Platform**: Aurora PostgreSQL, the KMS key, the secrets `<env>/payment-bulk-orchestration-service/db-app`
+   (runtime role), `<env>/payment-bulk-orchestration-service/db-migration` (schema owner, Flyway only) and
+   `.../oidc-client`, the IRSA role and the MSK policy, from `deploy/terraform` (plan reviewed before anyone
+   applies). DBA bootstrap creates the two roles. The DB/secret/TLS wiring of the chart and Terraform (Flyway
+   pre-install/pre-upgrade Job with db-migration only, app pods with db-app only and
+   `spring.flyway.enabled=false`, JDBC `sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem` from the
+   `rds-ca-bundle` ConfigMap) is owned by the platform round on this branch.
+   Pending on the platform side, not worked around here: microservice-base's runtime-secret rename and its
+   `timestamp()` removal (terraform-modules #11).
+5. **Smoke upload** in the target environment (section 3, step 6).
+6. **Route switch** (section 3, step 8).
+
+Known gap that blocks cutover: **consent binding to the authorised file.** A bulk consent should authorise one
+specific file (hash, number of transactions, control sum). This service binds each consent to one file
+(`bulk_consent_binding`, second file 409 `CONSENT_ALREADY_USED`), but consent-auth's view exposes none of the
+authorised file fields, so the uploaded file cannot be checked against what the PSU approved. Unless
+consent-auth exposes those fields (or the owner squad and compliance accept the gap in writing), cutover does
+not go ahead.
+
+## 3. Change Plan
+
+| Step | Action | Owner | Validation | Rollback Trigger |
+| --- | --- | --- | --- | --- |
+| 1 | Freeze scope; confirm the known gap is closed or formally accepted | Bulk squad, compliance | Signed scope checklist | Gap neither closed nor accepted |
+| 2 | Contracts merged (OpenAPI, AsyncAPI catalog PR #13) | Bulk squad, contracts | Contract tests green (`OpenApiContractTest`, `AsyncApiContractTest`, `ConsentServiceViewContractTest`) | Contract mismatch |
+| 3 | Cross-repo prerequisites 1 to 4 (section 2), in order | Consent owner, identity, mesh, platform | Each one confirmed in its own repo / ticket | Any prerequisite missing |
+| 4 | Deploy with `helm upgrade --install payment-bulk-orchestration-service deploy/helm/payment-bulk-orchestration-service -n payments -f values-<env>.yaml`; Flyway runs as the pre-install Job | Bulk squad | Pods ready; `flyway_schema_history` at the latest version; readiness green | Pods not ready, migration failure |
+| 5 | Relay stays off (`OUTBOX_RELAY_ENABLED=false`) until the platform has created `evt.pay.bulk.accepted.v1` and `evt.pay.bulk.rejected.v1` (the service never creates topics); then enable it | Bulk squad, platform | `outbox_pending_events` drains; `outbox_send_failures_total` flat | `outbox_parked_events` > 0 |
+| 6 | Smoke upload through the gateway with a test TPP (DPoP token, `INITIATEBULKPAYMENTS` consent, `Currency`) | Bulk squad | 202, then `Validated`, report figures equal the file; Accepted event on Kafka | Any 5xx, 401 on a valid proof, 503 from the consent check |
+| 7 | Freeze uploads on the monolith and drain it: wait until every monolith file is terminal or past its poll window | Bulk squad | No monolith file in a non-terminal state still being polled | Drain does not finish in the window |
+| 8 | Switch the gateway route `/open-finance/v1/file-payments/**` to this service | Mesh team | Smoke repeated; SLO checks below | See rollback triggers below |
+
+Rollback triggers after step 8 (any one, sustained for 5 minutes):
+- HTTP 5xx above 1 % of requests;
+- 503 `CONSENT_SERVICE_UNAVAILABLE` above 0.5 % of uploads;
+- 401 `invalid_dpop_proof` above 5 % of requests (likely a gateway header or `htu` problem);
+- `outbox_parked_events` above 0.
+
+## 4. Observability Gate
+
+1. Trace propagation: `x-fapi-interaction-id` is echoed, logged (`correlationId` in the log pattern) and carried
+   on every event as `correlationId`; `traceparent` is forwarded on events.
+2. Structured logs reach the central sink; no payee IBAN, customer id or file content is logged.
+3. Metrics (Prometheus, tag `service=svc-pay-bulk-orchestration`): request rate, latency and status codes;
+   `outbox_pending_events`, `outbox_oldest_pending_age_seconds`, `outbox_parked_events`,
+   `outbox_send_failures_total{exception}`.
+4. Alerts in place before step 8: the four rollback triggers above, plus `outbox_oldest_pending_age_seconds`
+   above 300 s (pages the owner squad) and any increase of `outbox_send_failures_total`.
+
+### Relay failure policy
+ADR-021 decision 4 (adr-runbooks #10 at 421f7b5 and the ruling e6dd76a):
 - Payload errors that can never succeed for the row (RecordTooLargeException, SerializationException,
   InvalidTopicException) park the row at once with `parked_reason = 'PAYLOAD_ERROR'` and the batch continues. A
   parked row keeps the rest of its bulk file blocked: later events of that file stay PENDING until the parked row is
@@ -42,17 +115,11 @@ Relay failure policy (ADR-021 decision 4, adr-runbooks #10 at 421f7b5 and the ru
   relay backs off (5 s doubling to 5 min) and retries. Such a row is never parked automatically, however long the
   failure lasts; there is no time ceiling.
 - `last_error`, logs and metric tags carry the exception class only, never record content or identifiers.
+- `outbox_send_failures_total{exception="<class>"}` says where to look: IAM policy or topic ACL for
+  `TopicAuthorizationException`/`SaslAuthenticationException`, brokers or egress for
+  `TimeoutException`/`NetworkException`.
 
-Alerts (names agreed with platform):
-- `outbox_oldest_pending_age_seconds{service="svc-pay-bulk-orchestration"}`: age of the oldest row waiting for the
-  relay. This pages the owning squad (for example above 300 s), because non-payload failures never park.
-- `outbox_send_failures_total{exception="<class>"}`: failed sends by exception class; the class says where to look
-  (IAM policy or topic ACL for `TopicAuthorizationException`/`SaslAuthenticationException`, brokers or egress for
-  `TimeoutException`/`NetworkException`).
-- `outbox_parked_events`: any value above 0 needs an operator; that file's later events wait for the replay.
-- `outbox_pending_events`: backlog.
-
-Manual park (only when a row blocks the relay for a reason no fix will cure, decided by the owning squad). The
+Manual park (only when a row blocks the relay for a reason no fix will cure, decided by the owner squad). The
 reason is required; the database refuses a park without one:
 
 ```sql
@@ -72,21 +139,41 @@ UPDATE sc_pay_bulk_orchestration.outbox_event
 SET status = 'PENDING', parked_at = NULL, parked_reason = NULL, attempts = 0, last_error = NULL
 WHERE event_id = '<event id>';
 ```
-This service consumes no topics. If a consumer is added it dead-letters to `evt.pay.bulk.dlq.v1`.
 
-## 5. Mesh and consent prerequisites
-The chart ships a NetworkPolicy and no Istio policy. The mesh owners must ALLOW:
-- inbound to this service on 8080 from `cluster.local/ns/istio-ingress/sa/istio-ingressgateway`;
-- inbound to the consent service from `cluster.local/ns/payments/sa/payment-bulk-orchestration-service`.
+This service consumes no topics and declares no dead-letter topic of its own.
 
-Consent reads go to consent-authorization-service at `GET /api/v1/consents/{id}`
-(`CONSENT_SERVICE_BASE_URL=http://consent-authorization-service.open-finance.svc.cluster.local:8080`). They use this
-service's client-credentials Bearer token; Keycloak must add `aud` `svc-of-consent-authorization` to it. The
-`usable` field decides. 404 means no consent. 5xx, a timeout or a response without `usable` gives 503, and the upload
-fails closed. **Prerequisite:** that internal endpoint must be deployed by the consent owner. It is not in the local
-consent repository checkout as of 2026-10-08.
+### Consent behaviour to watch
+Consent reads go to `GET /api/v1/consents/{id}`
+(`CONSENT_SERVICE_BASE_URL=http://consent-authorization-service.open-finance.svc.cluster.local:8080`) with this
+service's client-credentials token. `usable` decides; the required scope is `INITIATEBULKPAYMENTS`. 404 means no
+consent (403); 5xx, a timeout or a response without `usable` is 503 and the upload fails closed. The consent is
+read again before each processing batch: a consent that stopped being usable stops the file (`Stopped`,
+Rejected event with reason `CONSENT_NOT_USABLE`); a consent-service outage only delays processing.
 
-## 6. Cutover and rollback
-Cutover is routing only: point `/open-finance/v1/file-payments/**` at this service at the ingress.
-To roll back, route back to the monolith. No data has to flow back because the monolith keeps nothing.
-Files accepted by the new service stay readable here.
+## 5. Rollback Plan
+
+1. Route `/open-finance/v1/file-payments/**` back to the monolith at the gateway.
+2. Stop processing and publishing here: set `BULK_PROCESSING_ENABLED=false` and `OUTBOX_RELAY_ENABLED=false` (helm
+   upgrade with the previous values), so no further batch is released and no further event is published.
+3. Files uploaded to this service during the cutover are not visible through the monolith, which keeps nothing
+   and cannot read this service's data. Tell the affected TPPs (list them from `bulk_file` where `created_at` is
+   after the switch) which files must be uploaded again to the monolith.
+4. Revert to the rollback tags if code is at fault; re-run the smoke test on the restored path.
+5. Publish the incident and corrective actions within 24 h.
+
+## 6. Acceptance Checklist
+
+- [ ] Domain and application tests pass
+- [ ] Integration tests pass against PostgreSQL (`TEST_DB_URL`); CI fails without a database
+- [ ] Contract compatibility pass (OpenAPI, AsyncAPI, consent provider contract)
+- [ ] Security scan pass; DPoP enforced; Bearer tokens get 401
+- [ ] SLO/SLA thresholds pass for one business day after step 8
+- [ ] Known gap (consent binding to the authorised file) closed or accepted in writing
+- [ ] Audit evidence stored
+
+## 7. Evidence Links
+
+- PR links: pending (nothing is merged)
+- Pipeline runs: pending
+- Dashboard snapshots: pending
+- Incident/rollback references: none
