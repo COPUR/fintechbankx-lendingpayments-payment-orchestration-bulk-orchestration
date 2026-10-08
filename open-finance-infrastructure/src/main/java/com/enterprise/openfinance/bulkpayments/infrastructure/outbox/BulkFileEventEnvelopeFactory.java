@@ -49,7 +49,7 @@ public class BulkFileEventEnvelopeFactory {
 
     static PublicEvent map(BulkFileEvent event) {
         return switch (event) {
-            case BulkFileAccepted e -> new PublicEvent("file-accepted", "Accepted", data(
+            case BulkFileAccepted e -> new PublicEvent("accepted", "Accepted", data(
                     "fileId", e.fileId(),
                     "consentId", e.consentId(),
                     "tppId", e.tppId(),
@@ -58,7 +58,7 @@ public class BulkFileEventEnvelopeFactory {
                     "acceptedCount", e.acceptedCount(),
                     "rejectedCount", e.rejectedCount(),
                     "totalAmount", amount(e.totalAmount())));
-            case BulkFileCompleted e -> new PublicEvent("file-completed", "Completed", data(
+            case BulkFileCompleted e -> new PublicEvent("completed", "Completed", data(
                     "fileId", e.fileId(),
                     "outcome", e.outcome().name(),
                     "totalCount", e.totalCount(),
@@ -66,7 +66,7 @@ public class BulkFileEventEnvelopeFactory {
                     "rejectedCount", e.rejectedCount(),
                     "acceptedAmount", amount(e.acceptedAmount()),
                     "completedAt", e.occurredAt().toString()));
-            case BulkFileRejected e -> new PublicEvent("file-rejected", "Rejected", data(
+            case BulkFileRejected e -> new PublicEvent("rejected", "Rejected", data(
                     "fileId", e.fileId(),
                     "totalCount", e.totalCount(),
                     "rejectedCount", e.rejectedCount(),

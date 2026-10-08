@@ -357,7 +357,7 @@ class BulkOrchestrationServiceIT {
         ArgumentCaptor<ProducerRecord<String, String>> sent = ArgumentCaptor.forClass(ProducerRecord.class);
         org.mockito.Mockito.verify(kafka, org.mockito.Mockito.times(2)).send(sent.capture());
         assertThat(sent.getAllValues()).extracting(ProducerRecord::topic)
-                .containsExactly("evt.pay.bulk.file-accepted.v1", "evt.pay.bulk.file-completed.v1");
+                .containsExactly("evt.pay.bulk.accepted.v1", "evt.pay.bulk.completed.v1");
         assertThat(sent.getAllValues()).extracting(ProducerRecord::key).containsOnly(fileId);
         assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".outbox_event where status = 'PENDING'",
                 Integer.class)).isZero();

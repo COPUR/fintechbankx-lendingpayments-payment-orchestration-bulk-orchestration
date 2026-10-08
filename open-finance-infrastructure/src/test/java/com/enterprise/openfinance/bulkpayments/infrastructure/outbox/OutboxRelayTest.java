@@ -36,8 +36,8 @@ class OutboxRelayTest {
 
     @Test
     void publishesPendingRowsInOrderWithHeadersAndMarksThem() {
-        OutboxEventJpaEntity first = row("FILE-1", "evt.pay.bulk.file-accepted.v1");
-        OutboxEventJpaEntity second = row("FILE-1", "evt.pay.bulk.file-completed.v1");
+        OutboxEventJpaEntity first = row("FILE-1", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity second = row("FILE-1", "evt.pay.bulk.completed.v1");
         first.setTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
         when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
         when(outbox.findPendingBatch(100)).thenReturn(List.of(first, second));
@@ -49,7 +49,7 @@ class OutboxRelayTest {
         assertThat(first.getPublishedAt()).isEqualTo(NOW);
         assertThat(second.getStatus()).isEqualTo(OutboxEventJpaEntity.PUBLISHED);
         verify(kafka).send(argThat((ProducerRecord<String, String> record) ->
-                record.topic().equals("evt.pay.bulk.file-accepted.v1")
+                record.topic().equals("evt.pay.bulk.accepted.v1")
                         && record.key().equals("FILE-1")
                         && new String(record.headers().lastHeader("eventType").value(), StandardCharsets.UTF_8)
                         .equals("Payments.BulkFile.Accepted.v1")
@@ -57,14 +57,14 @@ class OutboxRelayTest {
                         .equals("ix-1")
                         && record.headers().lastHeader("traceparent") != null));
         verify(kafka).send(argThat((ProducerRecord<String, String> record) ->
-                record.topic().equals("evt.pay.bulk.file-completed.v1")
+                record.topic().equals("evt.pay.bulk.completed.v1")
                         && record.headers().lastHeader("traceparent") == null));
     }
 
     @Test
     void failedSendStopsTheBatchAndIsRetriedUntilMaxAttempts() {
-        OutboxEventJpaEntity failing = row("FILE-1", "evt.pay.bulk.file-accepted.v1");
-        OutboxEventJpaEntity later = row("FILE-2", "evt.pay.bulk.file-accepted.v1");
+        OutboxEventJpaEntity failing = row("FILE-1", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity later = row("FILE-2", "evt.pay.bulk.accepted.v1");
         when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
         when(outbox.findPendingBatch(100)).thenReturn(List.of(failing, later));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(new IllegalStateException("broker down")));
@@ -80,8 +80,8 @@ class OutboxRelayTest {
 
     @Test
     void poisonRowIsParkedAfterMaxAttemptsAndLaterRowsStillPublish() {
-        OutboxEventJpaEntity poison = row("FILE-1", "evt.pay.bulk.file-accepted.v1");
-        OutboxEventJpaEntity later = row("FILE-2", "evt.pay.bulk.file-accepted.v1");
+        OutboxEventJpaEntity poison = row("FILE-1", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity later = row("FILE-2", "evt.pay.bulk.accepted.v1");
         when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
         when(outbox.findPendingBatch(100)).thenReturn(List.of(poison, later));
         when(kafka.send(any(ProducerRecord.class)))
@@ -112,7 +112,7 @@ class OutboxRelayTest {
 
     @Test
     void interruptedSendStopsTheBatch() {
-        OutboxEventJpaEntity row = row("FILE-1", "evt.pay.bulk.file-accepted.v1");
+        OutboxEventJpaEntity row = row("FILE-1", "evt.pay.bulk.accepted.v1");
         when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
         when(outbox.findPendingBatch(100)).thenReturn(List.of(row));
         CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();

@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -27,7 +28,7 @@ class BulkFileEventEnvelopeFactoryTest {
         OutboxEventJpaEntity row = factory.toOutboxRow(new BulkFileAccepted(eventId, "FILE-1", 0L, AT, "CONS-1",
                 "TPP-001", BulkIntegrityMode.PARTIAL_REJECTION, 3, 2, 1, new BigDecimal("350")), "ix-1");
 
-        assertThat(row.getTopic()).isEqualTo("evt.pay.bulk.file-accepted.v1");
+        assertThat(row.getTopic()).isEqualTo("evt.pay.bulk.accepted.v1");
         assertThat(row.getEventType()).isEqualTo("Payments.BulkFile.Accepted.v1");
         assertThat(row.getAggregateType()).isEqualTo("BulkFile");
         assertThat(row.getAggregateId()).isEqualTo("FILE-1");
@@ -57,7 +58,7 @@ class BulkFileEventEnvelopeFactoryTest {
     void completedAndRejectedEnvelopes() throws Exception {
         OutboxEventJpaEntity completed = factory.toOutboxRow(new BulkFileCompleted(UUID.randomUUID(), "FILE-1", 3L,
                 AT, BulkFileStatus.PARTIALLY_ACCEPTED, 3, 2, 1, new BigDecimal("2510.3550")), "FILE-1");
-        assertThat(completed.getTopic()).isEqualTo("evt.pay.bulk.file-completed.v1");
+        assertThat(completed.getTopic()).isEqualTo("evt.pay.bulk.completed.v1");
         assertThat(completed.getEventType()).isEqualTo("Payments.BulkFile.Completed.v1");
         JsonNode data = json.readTree(completed.getPayload()).get("data");
         assertThat(data.get("outcome").asText()).isEqualTo("PARTIALLY_ACCEPTED");
@@ -67,9 +68,29 @@ class BulkFileEventEnvelopeFactoryTest {
 
         OutboxEventJpaEntity rejected = factory.toOutboxRow(new BulkFileRejected(UUID.randomUUID(), "FILE-2", 1L, AT,
                 2, 2), "FILE-2");
-        assertThat(rejected.getTopic()).isEqualTo("evt.pay.bulk.file-rejected.v1");
+        assertThat(rejected.getTopic()).isEqualTo("evt.pay.bulk.rejected.v1");
         assertThat(rejected.getEventType()).isEqualTo("Payments.BulkFile.Rejected.v1");
         assertThat(json.readTree(rejected.getPayload()).get("data").get("rejectedCount").asInt()).isEqualTo(2);
+    }
+
+    /** Catalog rule: evt.<ctx>.<aggregate>.<event>.v<n> where <event> is the eventType's event, lower case. */
+    @Test
+    void topicEventSegmentEqualsTheEventTypeEvent() {
+        List<OutboxEventJpaEntity> rows = List.of(
+                factory.toOutboxRow(new BulkFileAccepted(UUID.randomUUID(), "F", 0L, AT, "C", "T",
+                        BulkIntegrityMode.FULL_REJECTION, 1, 1, 0, BigDecimal.ONE), "F"),
+                factory.toOutboxRow(new BulkFileCompleted(UUID.randomUUID(), "F", 1L, AT, BulkFileStatus.COMPLETED,
+                        1, 1, 0, BigDecimal.ONE), "F"),
+                factory.toOutboxRow(new BulkFileRejected(UUID.randomUUID(), "F", 1L, AT, 1, 1), "F"));
+
+        for (OutboxEventJpaEntity row : rows) {
+            String[] topic = row.getTopic().split("\\.");
+            String[] type = row.getEventType().split("\\.");
+            assertThat(topic).hasSize(5);
+            assertThat(topic[0] + "." + topic[1] + "." + topic[2]).isEqualTo("evt.pay.bulk");
+            assertThat(topic[3]).isEqualTo(type[2].toLowerCase(java.util.Locale.ROOT));
+            assertThat(topic[4]).isEqualTo(type[3]);
+        }
     }
 
     @Test

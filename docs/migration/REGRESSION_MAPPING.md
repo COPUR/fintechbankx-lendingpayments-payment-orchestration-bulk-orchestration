@@ -15,7 +15,7 @@ service `BulkPaymentService`). The monolith kept every bulk file in memory.
 | `GET /open-finance/v1/file-payments/{fileId}/report` / `getFileReport` | `GET /open-finance/v1/file-payments/{fileId}/report` | Same body, ETag + 304, 404 / 403 | Built from the stored items. Only terminal reports are cached, so a cached report never goes stale. |
 | `BulkPaymentsController.validateSecurityHeaders` (prefix check of `Authorization`) | Spring Security resource server | `DPoP` and `X-FAPI-Interaction-ID` headers still required | The JWT is now validated (signature, issuer, `aud` = `svc-pay-bulk-orchestration`, realm roles). A missing or invalid token is 401 (monolith: 400 or accepted). DPoP is enforced: `Authorization: DPoP`, a verified proof (htm, htu, iat, ath, single-use jti) whose key matches `cnf.jkt`; a Bearer token or a bad proof is 401 (monolith only checked that the header was present). |
 | `InMemoryBulkConsentAdapter` | `HttpBulkConsentAdapter` (client credentials) | Consent checks for participant, expiry and `bulk-payment` scope | Revoked or not-authorised consents are refused (403). |
-| (none) | Events `evt.pay.bulk.file-{accepted,completed,rejected}.v1` through the transactional outbox | - | New. The monolith published no bulk events. |
+| (none) | Events `evt.pay.bulk.{accepted,completed,rejected}.v1` through the transactional outbox | - | New. The monolith published no bulk events. |
 
 ## Status codes
 

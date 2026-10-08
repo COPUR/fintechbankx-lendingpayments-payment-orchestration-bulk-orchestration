@@ -40,15 +40,15 @@ servers:
     - $ref: '#/components/securitySchemes/mtls'
 channels:
   fileAccepted:
-    address: evt.pay.bulk.file-accepted.v1
-    title: evt.pay.bulk.file-accepted.v1
+    address: evt.pay.bulk.accepted.v1
+    title: evt.pay.bulk.accepted.v1
     description: Payments.BulkFile.Accepted.v1. An uploaded bulk file passed consent, size, hash and schema checks; its items are stored and processing starts.
     messages:
       BulkFileAccepted:
         $ref: '#/components/messages/BulkFileAccepted'
     bindings:
       kafka:
-        topic: evt.pay.bulk.file-accepted.v1
+        topic: evt.pay.bulk.accepted.v1
         partitions: 3
         replicas: 3
         topicConfiguration:
@@ -58,15 +58,15 @@ channels:
           max.message.bytes: 1048576
         bindingVersion: 0.5.0
   fileCompleted:
-    address: evt.pay.bulk.file-completed.v1
-    title: evt.pay.bulk.file-completed.v1
+    address: evt.pay.bulk.completed.v1
+    title: evt.pay.bulk.completed.v1
     description: Payments.BulkFile.Completed.v1. Every item of the file was processed and at least one item was accepted (outcome COMPLETED or PARTIALLY_ACCEPTED).
     messages:
       BulkFileCompleted:
         $ref: '#/components/messages/BulkFileCompleted'
     bindings:
       kafka:
-        topic: evt.pay.bulk.file-completed.v1
+        topic: evt.pay.bulk.completed.v1
         partitions: 3
         replicas: 3
         topicConfiguration:
@@ -76,15 +76,15 @@ channels:
           max.message.bytes: 1048576
         bindingVersion: 0.5.0
   fileRejected:
-    address: evt.pay.bulk.file-rejected.v1
-    title: evt.pay.bulk.file-rejected.v1
+    address: evt.pay.bulk.rejected.v1
+    title: evt.pay.bulk.rejected.v1
     description: Payments.BulkFile.Rejected.v1. Every item of the file was processed and none was accepted (invalid items, or one invalid item in FULL_REJECTION mode).
     messages:
       BulkFileRejected:
         $ref: '#/components/messages/BulkFileRejected'
     bindings:
       kafka:
-        topic: evt.pay.bulk.file-rejected.v1
+        topic: evt.pay.bulk.rejected.v1
         partitions: 3
         replicas: 3
         topicConfiguration:
@@ -238,7 +238,7 @@ components:
           type: string
           minLength: 1
           description: >-
-            x-fapi-interaction-id of the upload request for file-accepted; the
+            x-fapi-interaction-id of the upload request for the Accepted event; the
             file id for events raised by the background processor.
         causationId:
           type:
