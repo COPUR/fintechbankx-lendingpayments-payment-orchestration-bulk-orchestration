@@ -76,6 +76,9 @@ spec:
             # schema owner; the pods hold the runtime role and never migrate.
             - name: SPRING_FLYWAY_ENABLED
               value: "false"
+            # Path of the mounted RDS CA bundle (shared-chart convention, cicd-templates 4f0f266).
+            - name: DB_SSL_ROOT_CERT
+              value: {{ printf "%s/%s" (trimSuffix "/" .Values.rdsCaBundle.mountPath) .Values.rdsCaBundle.key | quote }}
           {{- if .Values.kafkaStrimzi.enabled }}
             - name: SPRING_PROFILES_ACTIVE
               value: kafka-strimzi

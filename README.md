@@ -127,7 +127,7 @@ Database roles: the pods connect as the DML-only runtime role (`DB_USERNAME`, se
 (`java -jar ... migrate`, secret `db-migration`). See the runbook, section 2.
 
 Deployed, the pods verify Aurora's certificate: `DB_URL` must carry
-`sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem` (Terraform output
+`sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem` (Terraform output
 `jdbc_url`), and the chart mounts the platform ConfigMap `rds-ca-bundle` there. Local
 runs and tests keep their own URLs.
 

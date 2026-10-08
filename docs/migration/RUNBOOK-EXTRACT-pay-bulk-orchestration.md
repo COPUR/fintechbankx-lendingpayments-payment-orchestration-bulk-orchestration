@@ -72,7 +72,7 @@ Cross-repo prerequisites, in this order (each must be done before the next start
    (plan reviewed before anyone applies). ESO may read only `<env>/<service account>/`; the chart refuses any other
    key and any ExternalSecret whose `app.kubernetes.io/name` is not the service account. Then the DBA bootstrap
    below. `config.DB_URL` is the Terraform output `jdbc_url`
-   (`sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem`; the chart refuses anything else and mounts
+   (`sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem`; the chart refuses anything else and mounts
    ConfigMap `rds-ca-bundle`, which trust-manager must have published in `payments`); `migration.remoteSecretName`
    is the output `migration_db_secret_name`.
    Pending on the platform side, not worked around here: microservice-base (terraform-modules, ref=main) still

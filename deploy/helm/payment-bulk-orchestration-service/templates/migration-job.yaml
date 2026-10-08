@@ -83,6 +83,9 @@ spec:
           env:
             - name: DB_URL
               value: {{ .Values.config.DB_URL | quote }}
+            # Path of the mounted RDS CA bundle (shared-chart convention, cicd-templates 4f0f266).
+            - name: DB_SSL_ROOT_CERT
+              value: {{ printf "%s/%s" (trimSuffix "/" .Values.rdsCaBundle.mountPath) .Values.rdsCaBundle.key | quote }}
             # The runtime role V11 grants (Flyway placeholder runtime_role).
             - name: DB_USERNAME
               value: {{ .Values.config.DB_USERNAME | quote }}
