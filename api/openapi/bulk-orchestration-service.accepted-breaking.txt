@@ -1,0 +1,7 @@
+# Accepted (Proposed, pending the API owner's review) 2026-10-08 with the move to a standalone service: the spec on main described the seed's draft body (FilePaymentId, TotalItems), not the API the monolith served; see api/openapi/ACCEPTED_BREAKING.md.
+# The spec now documents the body the service reads (ConsentId, FileName, FileContent, FileHash, Currency, optional IntegrityMode). Currency is new and required: amounts are never validated or published without it.
+# Delete this file in the first PR after this one merges (scripts/ci/oasdiff-breaking.sh enforces it).
+POST /file-payments added the new required request property 'Data/Currency'
+POST /file-payments added the new required request property 'Data/FileContent'
+POST /file-payments added the new required request property 'Data/FileHash'
+POST /file-payments added the new required request property 'Data/FileName'
