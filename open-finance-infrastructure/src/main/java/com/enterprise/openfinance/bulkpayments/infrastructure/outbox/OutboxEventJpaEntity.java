@@ -64,6 +64,10 @@ public class OutboxEventJpaEntity {
     @Column(name = "parked_at")
     private Instant parkedAt;
 
+    /** First failed send; the retryable-failure ceiling is measured from here. */
+    @Column(name = "first_failed_at")
+    private Instant firstFailedAt;
+
     @Column(name = "attempts", nullable = false)
     private int attempts;
 
@@ -104,6 +108,7 @@ public class OutboxEventJpaEntity {
     public String getStatus() { return status; }
     public Instant getPublishedAt() { return publishedAt; }
     public Instant getParkedAt() { return parkedAt; }
+    public Instant getFirstFailedAt() { return firstFailedAt; }
     public int getAttempts() { return attempts; }
     public String getLastError() { return lastError; }
 
@@ -114,19 +119,18 @@ public class OutboxEventJpaEntity {
         this.lastError = null;
     }
 
-    /**
-     * Records a failed send.
-     *
-     * @return {@code true} if the row is now parked
-     */
-    boolean markFailed(String error, int maxAttempts, Instant at) {
+    /** Records a failed send; the first one starts the retryable-failure clock. */
+    void markFailed(String error, Instant at) {
+        if (firstFailedAt == null) {
+            this.firstFailedAt = at;
+        }
         this.attempts++;
         this.lastError = error == null ? null : error.substring(0, Math.min(error.length(), 512));
-        if (attempts >= maxAttempts) {
-            this.status = PARKED;
-            this.parkedAt = at;
-            return true;
-        }
-        return false;
+    }
+
+    /** The relay gave up on this row; it is skipped until an operator replays it. */
+    void park(Instant at) {
+        this.status = PARKED;
+        this.parkedAt = at;
     }
 }

@@ -30,8 +30,34 @@ required value fails the render. Flyway creates `sc_pay_bulk_orchestration` on f
 `outbox_pending_events`). The catalog PR for `evt.pay.bulk.accepted.v1`,
 `evt.pay.bulk.completed.v1` (contract only, not emitted yet) and `evt.pay.bulk.rejected.v1` (AsyncAPI
 `api/asyncapi/svc-pay-bulk-orchestration.yaml`) is **pending**. After it merges and the platform creates the topics
-(the service never auto-creates them), set `OUTBOX_RELAY_ENABLED=true`. Watch `outbox_parked_events`:
-a row that fails `max-attempts` (10) times is PARKED and does not block later rows.
+(the service never auto-creates them), set `OUTBOX_RELAY_ENABLED=true`.
+
+Relay failure policy (same as svc-rsk-decisioning):
+- Retryable Kafka failures (TimeoutException, NotEnoughReplicasException, NetworkException, any
+  `RetriableException`, or the relay's own send timeout) stop the batch and are retried on the next run. They never
+  count toward parking, so an outage only delays events. A row is parked on a retryable failure only after it has
+  been failing continuously for longer than `openfinance.bulkpayments.outbox.relay.retryable-park-after` (default
+  `PT24H`), measured from its `first_failed_at` (V7). There is no attempt-count cap.
+- Non-retriable failures (RecordTooLarge, Serialization, TopicAuthorization, InvalidTopic, anything not retriable)
+  park the row at once; later rows continue.
+
+Alerts:
+- `outbox_oldest_pending_age_seconds{service="svc-pay-bulk-orchestration"}`: age of the oldest row waiting for the
+  relay. This is the outage alert (for example above 300 s), because retryable failures do not park.
+- `outbox_parked_events`: any value above 0 needs an operator.
+- `outbox_pending_events`: backlog.
+
+Parked outbox events: find the cause in `last_error`, fix it (topic ACL, message size), then replay:
+
+```sql
+SELECT event_id, created_seq, topic, attempts, first_failed_at, last_error, parked_at
+FROM sc_pay_bulk_orchestration.outbox_event WHERE status = 'PARKED' ORDER BY created_seq;
+
+-- first_failed_at must be reset, otherwise the 24 h ceiling parks the row again on its first retryable failure.
+UPDATE sc_pay_bulk_orchestration.outbox_event
+SET status = 'PENDING', parked_at = NULL, first_failed_at = NULL, attempts = 0, last_error = NULL
+WHERE event_id = '<event id>';
+```
 This service consumes no topics. If a consumer is added it dead-letters to `evt.pay.bulk.dlq.v1`.
 
 ## 5. Mesh and consent prerequisites

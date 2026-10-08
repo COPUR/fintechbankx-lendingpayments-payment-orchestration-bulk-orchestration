@@ -495,13 +495,42 @@ class BulkOrchestrationServiceIT {
 
     @Test
     @SuppressWarnings("unchecked")
+    void relayRetriesOutagesWithoutParkingAndParksPermanentFailuresAtOnce() throws Exception {
+        String fileId = upload("IDEMP-PARK", csv("INS-1," + IBAN + ",10.00"), "PARTIAL_REJECTION");
+        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
+                Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), Duration.ofHours(24));
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(
+                new org.apache.kafka.common.errors.TimeoutException("Expiring 1 record(s)")));
+
+        for (int run = 0; run < 12; run++) {
+            assertThat(relay.relayOnce()).isZero();
+        }
+        var pending = jdbc.queryForMap("select status, attempts, first_failed_at, last_error from " + SCHEMA
+                + ".outbox_event where aggregate_id = ?", fileId);
+        assertThat(pending.get("status")).isEqualTo("PENDING");
+        assertThat(pending.get("attempts")).isEqualTo(12);
+        assertThat(pending.get("first_failed_at")).isNotNull();
+        assertThat((String) pending.get("last_error")).startsWith("TimeoutException");
+
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(
+                new org.apache.kafka.common.errors.RecordTooLargeException("too large")));
+        assertThat(relay.relayOnce()).isZero();
+        var parked = jdbc.queryForMap("select status, parked_at, last_error from " + SCHEMA
+                + ".outbox_event where aggregate_id = ?", fileId);
+        assertThat(parked.get("status")).isEqualTo("PARKED");
+        assertThat(parked.get("parked_at")).isNotNull();
+        assertThat(parked.get("last_error")).isEqualTo("RecordTooLargeException: too large");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void relayPublishesTheOutboxToKafkaInOrder() throws Exception {
         String fileId = upload("IDEMP-RELAY", csv("INS-1,AE000,10.00"), "PARTIAL_REJECTION");
         processor.processNextBatch();
         when(kafka.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-                Clock.systemUTC(), 100, 10, Duration.ofSeconds(5), Duration.ofDays(7));
+                Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), Duration.ofHours(24));
 
         assertThat(relay.relayOnce()).isEqualTo(2);
 

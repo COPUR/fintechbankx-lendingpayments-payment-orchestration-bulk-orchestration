@@ -41,12 +41,14 @@ public class OutboxConfiguration {
                 .description("Bulk file events written to the outbox but not yet published to Kafka")
                 .register(registry);
         Gauge.builder("outbox.parked.events", outbox, repo -> repo.countByStatus(OutboxEventJpaEntity.PARKED))
-                .description("Bulk file events that failed relay.max-attempts times and wait for an operator")
+                .description("Bulk file events the relay parked (permanent failure, or retryable failures for longer than relay.retryable-park-after) that wait for an operator")
                 .register(registry);
         Gauge.builder("outbox.oldest.pending.age.seconds", outbox, repo -> repo.findOldestPendingOccurredAt()
                         .map(oldest -> (double) Duration.between(oldest, Instant.now(clock)).toSeconds())
                         .orElse(0.0))
-                .description("Age of the oldest event not yet published")
+                .description("Age of the oldest event not yet published; the alert for a stalled relay, since retryable"
+                        + " failures stop the batch without parking for up to relay.retryable-park-after")
+                .baseUnit("seconds")
                 .register(registry);
         return new OutboxMetrics();
     }
@@ -71,11 +73,12 @@ public class OutboxConfiguration {
                                 PlatformTransactionManager transactionManager,
                                 Clock clock,
                                 @Value("${openfinance.bulkpayments.outbox.relay.batch-size:100}") int batchSize,
-                                @Value("${openfinance.bulkpayments.outbox.relay.max-attempts:10}") int maxAttempts,
                                 @Value("${openfinance.bulkpayments.outbox.relay.send-timeout:PT35S}") Duration sendTimeout,
-                                @Value("${openfinance.bulkpayments.outbox.retention:P7D}") Duration retention) {
+                                @Value("${openfinance.bulkpayments.outbox.retention:P7D}") Duration retention,
+                                @Value("${openfinance.bulkpayments.outbox.relay.retryable-park-after:PT24H}")
+                                Duration retryableParkAfter) {
             return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize,
-                    maxAttempts, sendTimeout, retention);
+                    sendTimeout, retention, retryableParkAfter);
         }
 
         @Bean
