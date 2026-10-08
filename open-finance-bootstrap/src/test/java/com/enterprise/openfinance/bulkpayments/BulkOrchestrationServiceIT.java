@@ -9,6 +9,15 @@ import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkFilePort;
 import com.enterprise.openfinance.bulkpayments.infrastructure.outbox.OutboxRelay;
 import com.enterprise.openfinance.bulkpayments.infrastructure.outbox.SpringDataOutboxRepository;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.nimbusds.jose.JOSEObjectType;
+import com.nimbusds.jose.JWSAlgorithm;
+import com.nimbusds.jose.JWSHeader;
+import com.nimbusds.jose.crypto.ECDSASigner;
+import com.nimbusds.jose.jwk.Curve;
+import com.nimbusds.jose.jwk.ECKey;
+import com.nimbusds.jose.jwk.gen.ECKeyGenerator;
+import com.nimbusds.jwt.JWTClaimsSet;
+import com.nimbusds.jwt.SignedJWT;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.junit.jupiter.api.BeforeAll;
@@ -30,6 +39,7 @@ import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -79,6 +89,8 @@ class BulkOrchestrationServiceIT {
 
     private static final String SCHEMA = "sc_pay_bulk_orchestration";
     private static final String IBAN = "AE120001000000000000000001";
+    private static final ECKey TPP_001_KEY = ecKey();
+    private static final ECKey TPP_999_KEY = ecKey();
 
     @BeforeAll
     static void requireDatabase() {
@@ -105,15 +117,17 @@ class BulkOrchestrationServiceIT {
     @BeforeEach
     void stubTokens() {
         when(jwtDecoder.decode(any())).thenAnswer(call -> switch ((String) call.getArgument(0)) {
-            case "tpp-001-token" -> token("TPP-001");
-            case "tpp-999-token" -> token("TPP-999");
+            case "tpp-001-token" -> token("TPP-001", "tpp-001-token", TPP_001_KEY);
+            case "tpp-999-token" -> token("TPP-999", "tpp-999-token", TPP_999_KEY);
             default -> throw new BadJwtException("invalid token");
         });
     }
 
-    private static Jwt token(String tpp) {
-        return Jwt.withTokenValue("tpp-token").header("alg", "RS256")
+    /** DPoP-bound access token: cnf.jkt is the thumbprint of the TPP's proof key. */
+    private static Jwt token(String tpp, String tokenValue, ECKey key) {
+        return Jwt.withTokenValue(tokenValue).header("alg", "RS256")
                 .subject("client-" + tpp).claim("azp", tpp)
+                .claim("cnf", java.util.Map.of("jkt", thumbprint(key)))
                 .audience(List.of("svc-pay-bulk-orchestration"))
                 .issuedAt(java.time.Instant.now()).expiresAt(java.time.Instant.now().plusSeconds(300))
                 .build();
@@ -121,6 +135,7 @@ class BulkOrchestrationServiceIT {
 
     @BeforeEach
     void cleanTables() {
+        jdbc.update("delete from " + SCHEMA + ".dpop_proof_jti");
         jdbc.update("delete from " + SCHEMA + ".outbox_event");
         jdbc.update("delete from " + SCHEMA + ".bulk_idempotency");
         jdbc.update("delete from " + SCHEMA + ".bulk_item");
@@ -135,7 +150,7 @@ class BulkOrchestrationServiceIT {
                 order by table_name
                 """, String.class);
 
-        assertThat(tables).containsExactly("bulk_file", "bulk_idempotency", "bulk_item", "outbox_event");
+        assertThat(tables).containsExactly("bulk_file", "bulk_idempotency", "bulk_item", "dpop_proof_jti", "outbox_event");
     }
 
     @Test
@@ -357,9 +372,7 @@ class BulkOrchestrationServiceIT {
                         .header("X-FAPI-Interaction-ID", "ix-1"))
                 .andExpect(status().isUnauthorized());
 
-        mvc.perform(get("/open-finance/v1/file-payments/{id}", fileId)
-                        .header("Authorization", "DPoP tpp-999-token").header("DPoP", "proof")
-                        .header("X-FAPI-Interaction-ID", "ix-1"))
+        mvc.perform(asTpp(get("/open-finance/v1/file-payments/{id}", fileId), "tpp-999-token", TPP_999_KEY))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
 
@@ -368,6 +381,40 @@ class BulkOrchestrationServiceIT {
 
         mvc.perform(asTpp(get("/internal/anything")))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void dpopProofIsRequiredAndVerifiedOnTheTppApi() throws Exception {
+        String fileId = upload("IDEMP-DPOP", csv("INS-1," + IBAN + ",10.00"), "PARTIAL_REJECTION");
+        String path = "/open-finance/v1/file-payments/" + fileId;
+
+        mvc.perform(get(path).header("Authorization", "DPoP tpp-001-token").header("X-FAPI-Interaction-ID", "ix-d1"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("WWW-Authenticate", org.hamcrest.Matchers.startsWith("DPoP error=\"invalid_dpop_proof\"")))
+                .andExpect(jsonPath("$.code").value("INVALID_DPOP_PROOF"));
+
+        mvc.perform(get(path).header("Authorization", "Bearer tpp-001-token")
+                        .header("X-FAPI-Interaction-ID", "ix-d2").with(dpop("tpp-001-token", TPP_001_KEY)))
+                .andExpect(status().isUnauthorized());
+
+        mvc.perform(asTpp(get(path), "tpp-001-token", TPP_999_KEY))
+                .andExpect(status().isUnauthorized());
+
+        String otherUrlProof = proof(TPP_001_KEY, "GET", "http://localhost/open-finance/v1/file-payments/OTHER",
+                "tpp-001-token", java.util.UUID.randomUUID().toString());
+        mvc.perform(get(path).header("Authorization", "DPoP tpp-001-token").header("DPoP", otherUrlProof)
+                        .header("X-FAPI-Interaction-ID", "ix-d3"))
+                .andExpect(status().isUnauthorized());
+
+        String once = proof(TPP_001_KEY, "GET", "http://localhost" + path, "tpp-001-token", "jti-it-replay");
+        mvc.perform(get(path).header("Authorization", "DPoP tpp-001-token").header("DPoP", once)
+                        .header("X-FAPI-Interaction-ID", "ix-d4"))
+                .andExpect(status().isOk());
+        mvc.perform(get(path).header("Authorization", "DPoP tpp-001-token").header("DPoP", once)
+                        .header("X-FAPI-Interaction-ID", "ix-d5"))
+                .andExpect(status().isUnauthorized());
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".dpop_proof_jti", Integer.class))
+                .isGreaterThanOrEqualTo(2);
     }
 
     private String upload(String idempotencyKey, String content, String mode) throws Exception {
@@ -381,11 +428,56 @@ class BulkOrchestrationServiceIT {
     }
 
     private static MockHttpServletRequestBuilder asTpp(MockHttpServletRequestBuilder builder) {
+        return asTpp(builder, "tpp-001-token", TPP_001_KEY);
+    }
+
+    private static MockHttpServletRequestBuilder asTpp(MockHttpServletRequestBuilder builder, String token, ECKey key) {
         return builder
-                .header("Authorization", "DPoP tpp-001-token")
-                .header("DPoP", "proof-jwt")
+                .header("Authorization", "DPoP " + token)
                 .header("X-FAPI-Interaction-ID", "ix-bulk-it")
-                .accept("application/json");
+                .accept("application/json")
+                .with(dpop(token, key));
+    }
+
+    /** Adds a fresh RFC 9449 proof for the request's method and URL, bound to the access token. */
+    private static RequestPostProcessor dpop(String token, ECKey key) {
+        return request -> {
+            request.addHeader("DPoP", proof(key, request.getMethod(), request.getRequestURL().toString(), token,
+                    java.util.UUID.randomUUID().toString()));
+            return request;
+        };
+    }
+
+    private static String proof(ECKey key, String method, String url, String token, String jti) {
+        try {
+            byte[] ath = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.US_ASCII));
+            SignedJWT jwt = new SignedJWT(
+                    new JWSHeader.Builder(JWSAlgorithm.ES256).type(new JOSEObjectType("dpop+jwt"))
+                            .jwk(key.toPublicJWK()).build(),
+                    new JWTClaimsSet.Builder().claim("htm", method).claim("htu", url)
+                            .claim("ath", Base64.getUrlEncoder().withoutPadding().encodeToString(ath))
+                            .issueTime(new java.util.Date()).jwtID(jti).build());
+            jwt.sign(new ECDSASigner(key));
+            return jwt.serialize();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static ECKey ecKey() {
+        try {
+            return new ECKeyGenerator(Curve.P_256).generate();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static String thumbprint(ECKey key) {
+        try {
+            return key.computeThumbprint("SHA-256").toString();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private String body(String consentId, String fileName, String content, String hash, String mode) throws Exception {

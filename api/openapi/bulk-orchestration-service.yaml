@@ -11,7 +11,7 @@ paths:
       summary: Upload bulk payment file
       operationId: uploadBulkFile
       security:
-        - bearerAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/InteractionId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -44,7 +44,7 @@ paths:
       summary: Initiate bulk payment execution
       operationId: executeBulkFile
       security:
-        - bearerAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/InteractionId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -78,7 +78,7 @@ paths:
       summary: Get bulk payment status
       operationId: getBulkStatus
       security:
-        - bearerAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/InteractionId'
         - name: filePaymentId
@@ -98,7 +98,7 @@ paths:
       summary: Get bulk execution report
       operationId: getBulkReport
       security:
-        - bearerAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/InteractionId'
         - name: filePaymentId
@@ -115,10 +115,14 @@ paths:
                 $ref: '#/components/schemas/BulkReportResponse'
 components:
   securitySchemes:
-    bearerAuth:
+    dpopAuth:
       type: http
-      scheme: bearer
+      scheme: DPoP
       bearerFormat: JWT
+      description: >-
+        DPoP-bound access token (RFC 9449) from realm fintechbankx with aud
+        svc-pay-bulk-orchestration and cnf.jkt. Sent as "Authorization: DPoP <token>"
+        with a DPoP proof header; a Bearer token gets 401.
   parameters:
     InteractionId:
       name: x-fapi-interaction-id
@@ -144,8 +148,11 @@ components:
       in: header
       required: true
       description: >-
-        Must be present. The proof is not cryptographically validated or bound
-        to the access token by this service (sender-constraining is not enforced).
+        DPoP proof JWT (RFC 9449): typ dpop+jwt, ES256 or PS256, public jwk header,
+        htm and htu of this request, iat within 5 minutes (1 minute future skew),
+        ath of the access token and a single-use jti. The jwk thumbprint must equal
+        the token's cnf.jkt. Any failure gets 401 with WWW-Authenticate DPoP
+        error="invalid_dpop_proof".
       schema:
         type: string
   schemas:

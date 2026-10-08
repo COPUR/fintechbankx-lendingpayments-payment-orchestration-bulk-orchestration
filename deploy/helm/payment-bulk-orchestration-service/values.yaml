@@ -56,6 +56,8 @@ config:
   OIDC_JWK_SET_URI: ""            # required: <issuer>/protocol/openid-connect/certs
   OIDC_TOKEN_URI: ""              # required: client-credentials token endpoint for service-to-service calls
   OIDC_AUDIENCE: svc-pay-bulk-orchestration
+  # TPP-facing API: keep "true" (platform contract, DPoP applies by caller).
+  DPOP_REQUIRED: "true"
   SERVICE_CLIENT_ID: svc-pay-bulk-orchestration
   CONSENT_ADAPTER: http
   CONSENT_SERVICE_BASE_URL: http://consent-auth-service.open-finance.svc.cluster.local:8080

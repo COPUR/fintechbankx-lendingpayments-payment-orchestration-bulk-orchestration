@@ -126,6 +126,11 @@ openfinance:
     security:
       # Access tokens must carry this service id in aud.
       audience: ${OIDC_AUDIENCE:svc-pay-bulk-orchestration}
+      # TPP-facing API: DPoP scheme, verified proof (jti replay guard in dpop_proof_jti) and cnf.jkt match.
+      dpop:
+        required: ${DPOP_REQUIRED:true}
+        max-proof-age: PT5M
+        allowed-future-skew: PT1M
     consent:
       # http: consent service (default, fails closed). in-memory: seeded consents for local runs only.
       adapter: ${CONSENT_ADAPTER:http}

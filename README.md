@@ -117,10 +117,11 @@ TEST_DB_URL=jdbc:postgresql://localhost:5432/<db> TEST_DB_USERNAME=<user> TEST_D
 ```
 
 Local boot without Kafka: set `DB_URL`, `DB_USERNAME`, `SPRING_DATASOURCE_PASSWORD`,
-`CONSENT_ADAPTER=in-memory` and keep `OUTBOX_RELAY_ENABLED=false`, then
+`CONSENT_ADAPTER=in-memory` and keep `OUTBOX_RELAY_ENABLED=false` (and `DPOP_REQUIRED=false` to call it with plain Bearer tokens), then
 `java -jar open-finance-bootstrap/build/libs/payment-bulk-orchestration-service.jar`
 (API on 8080, management on 8081).
 
+- Security: TPP-facing API, so DPoP is enforced (`Authorization: DPoP`, verified proof with a single-use jti, proof key = token `cnf.jkt`, `aud` = `svc-pay-bulk-orchestration`). Set `DPOP_REQUIRED=false` only for local runs with plain tokens.
 - Endpoints: `POST /open-finance/v1/file-payments`, `GET /open-finance/v1/file-payments/{fileId}`, `GET /open-finance/v1/file-payments/{fileId}/report`
 - Events contract: [AsyncAPI](./api/asyncapi/svc-pay-bulk-orchestration.yaml)
 - Deployment: [Helm chart](./deploy/helm/payment-bulk-orchestration-service), [Terraform](./deploy/terraform), [deployment notes](./docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md)
