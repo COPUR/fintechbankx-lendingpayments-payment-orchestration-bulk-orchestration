@@ -123,7 +123,7 @@ class BulkOrchestrationServiceIT {
     @BeforeEach
     void stubConsents() {
         when(consents.findById(any())).thenAnswer(call -> Optional.of(new BulkConsentContext(call.getArgument(0),
-                "TPP-001", java.util.Set.of("bulk-payment"), java.time.Instant.parse("2099-01-01T00:00:00Z"), true)));
+                "TPP-001", java.util.Set.of("INITIATEBULKPAYMENTS"), java.time.Instant.parse("2099-01-01T00:00:00Z"), true)));
     }
 
     @BeforeEach

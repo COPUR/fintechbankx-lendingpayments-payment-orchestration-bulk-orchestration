@@ -17,6 +17,9 @@ public record BulkConsentContext(
         boolean authorized
 ) {
 
+    /** Scope of a bulk payment consent, as consent-authorization-service names it. */
+    public static final String INITIATE_BULK_PAYMENTS = "INITIATEBULKPAYMENTS";
+
     public BulkConsentContext {
         if (isBlank(consentId)) {
             throw new IllegalArgumentException("consentId is required");
@@ -33,7 +36,7 @@ public record BulkConsentContext(
 
         consentId = consentId.trim();
         tppId = tppId.trim();
-        scopes = scopes.stream().map(String::trim).map(String::toLowerCase).collect(Collectors.toUnmodifiableSet());
+        scopes = scopes.stream().map(BulkConsentContext::canonical).collect(Collectors.toUnmodifiableSet());
     }
 
     public boolean belongsToTpp(String candidateTppId) {
@@ -41,7 +44,17 @@ public record BulkConsentContext(
     }
 
     public boolean hasScope(String requiredScope) {
-        return requiredScope != null && scopes.contains(requiredScope.trim().toLowerCase());
+        return requiredScope != null && scopes.contains(canonical(requiredScope));
+    }
+
+    /** The consent authorises bulk payment files (scope INITIATEBULKPAYMENTS). */
+    public boolean allowsBulkInitiation() {
+        return hasScope(INITIATE_BULK_PAYMENTS);
+    }
+
+    /** Same normalisation as consent-authorization-service: upper case, anything but A-Z and 0-9 dropped. */
+    private static String canonical(String scope) {
+        return scope.trim().toUpperCase(java.util.Locale.ROOT).replaceAll("[^A-Z0-9]", "");
     }
 
     public boolean isActive(Instant now) {

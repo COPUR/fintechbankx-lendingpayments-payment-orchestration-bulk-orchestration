@@ -46,7 +46,7 @@ import java.util.UUID;
 @Transactional(readOnly = true)
 public class BulkPaymentService implements BulkPaymentUseCase {
 
-    static final String REQUIRED_SCOPE = "bulk-payment";
+    static final String REQUIRED_SCOPE = BulkConsentContext.INITIATE_BULK_PAYMENTS;
 
     private final BulkConsentPort consentPort;
     private final BulkConsentBindingPort bindingPort;
@@ -178,7 +178,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
         if (!consent.isActive(now)) {
             throw new ForbiddenException("Consent expired");
         }
-        if (!consent.hasScope(REQUIRED_SCOPE)) {
+        if (!consent.allowsBulkInitiation()) {
             throw new ForbiddenException("Required scope missing: " + REQUIRED_SCOPE);
         }
     }

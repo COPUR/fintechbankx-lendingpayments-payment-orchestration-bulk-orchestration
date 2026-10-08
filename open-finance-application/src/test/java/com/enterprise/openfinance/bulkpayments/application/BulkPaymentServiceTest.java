@@ -105,7 +105,7 @@ class BulkPaymentServiceTest {
     @Test
     void aConsentAuthorisesOneFileAndRecordsWhatItAuthorised() {
         BulkPaymentService service = service(settings(10));
-        consentPort.data.put("CONS-SHARED", new BulkConsentContext("CONS-SHARED", "TPP-001", Set.of("bulk-payment"),
+        consentPort.data.put("CONS-SHARED", new BulkConsentContext("CONS-SHARED", "TPP-001", Set.of("INITIATEBULKPAYMENTS"),
                 Instant.parse("2099-01-01T00:00:00Z"), true));
         String first = validCsv("INS-1," + IBAN + ",10.00", "INS-2,AE000,5.50");
         String second = validCsv("INS-9," + IBAN + ",99.00");
@@ -288,20 +288,20 @@ class BulkPaymentServiceTest {
         assertForbidden(service, "CONS-MISSING", content, "Consent not found");
 
         consentPort.data.put("CONS-EXPIRED", new BulkConsentContext("CONS-EXPIRED", "TPP-001",
-                Set.of("bulk-payment"), Instant.parse("2026-02-01T00:00:00Z"), true));
+                Set.of("INITIATEBULKPAYMENTS"), Instant.parse("2026-02-01T00:00:00Z"), true));
         assertForbidden(service, "CONS-EXPIRED", content, "expired");
 
         consentPort.data.put("CONS-OTHER-TPP", new BulkConsentContext("CONS-OTHER-TPP", "TPP-999",
-                Set.of("bulk-payment"), Instant.parse("2099-01-01T00:00:00Z"), true));
+                Set.of("INITIATEBULKPAYMENTS"), Instant.parse("2099-01-01T00:00:00Z"), true));
         assertForbidden(service, "CONS-OTHER-TPP", content, "participant mismatch");
 
         consentPort.data.put("CONS-REVOKED", new BulkConsentContext("CONS-REVOKED", "TPP-001",
-                Set.of("bulk-payment"), Instant.parse("2099-01-01T00:00:00Z"), false));
+                Set.of("INITIATEBULKPAYMENTS"), Instant.parse("2099-01-01T00:00:00Z"), false));
         assertForbidden(service, "CONS-REVOKED", content, "not authorised");
 
         consentPort.data.put("CONS-RO", new BulkConsentContext("CONS-RO", "TPP-001",
                 Set.of("read-accounts"), Instant.parse("2099-01-01T00:00:00Z"), true));
-        assertForbidden(service, "CONS-RO", content, "Required scope missing: bulk-payment");
+        assertForbidden(service, "CONS-RO", content, "Required scope missing: INITIATEBULKPAYMENTS");
     }
 
     @Test
@@ -432,7 +432,7 @@ class BulkPaymentServiceTest {
         private final Map<String, BulkConsentContext> data = new ConcurrentHashMap<>();
 
         private TestConsentPort() {
-            data.put("CONS-BULK-001", new BulkConsentContext("CONS-BULK-001", "TPP-001", Set.of("bulk-payment"),
+            data.put("CONS-BULK-001", new BulkConsentContext("CONS-BULK-001", "TPP-001", Set.of("INITIATEBULKPAYMENTS"),
                     Instant.parse("2099-01-01T00:00:00Z"), true));
         }
 
@@ -440,7 +440,7 @@ class BulkPaymentServiceTest {
         public Optional<BulkConsentContext> findById(String consentId) {
             if (consentId.startsWith("CONS-IDEMP-")) {
                 return Optional.of(data.computeIfAbsent(consentId, id -> new BulkConsentContext(id, "TPP-001",
-                        Set.of("bulk-payment"), Instant.parse("2099-01-01T00:00:00Z"), true)));
+                        Set.of("INITIATEBULKPAYMENTS"), Instant.parse("2099-01-01T00:00:00Z"), true)));
             }
             return Optional.ofNullable(data.get(consentId));
         }

@@ -45,14 +45,14 @@ class HttpBulkConsentAdapterTest {
                 .andExpect(header("X-FAPI-Interaction-ID", "ix-7"))
                 .andRespond(withSuccess("""
                         {"consentId":"CONS-1","participantId":"TPP-001","customerId":"CUST-1",
-                         "scopes":["bulk-payment"],"accountIds":["ACC-1"],"status":"AUTHORIZED",
+                         "scopes":["INITIATEBULKPAYMENTS"],"accountIds":["ACC-1"],"status":"AUTHORIZED",
                          "expiresAt":"2099-01-01T00:00:00Z","usable":true,"futureField":"ignored"}
                         """, MediaType.APPLICATION_JSON));
 
         BulkConsentContext consent = adapter.findById("CONS-1").orElseThrow();
 
         assertThat(consent.tppId()).isEqualTo("TPP-001");
-        assertThat(consent.hasScope("bulk-payment")).isTrue();
+        assertThat(consent.allowsBulkInitiation()).isTrue();
         assertThat(consent.isAuthorized()).isTrue();
         assertThat(consent.expiresAt()).isEqualTo(Instant.parse("2099-01-01T00:00:00Z"));
         server.verify();
@@ -62,12 +62,12 @@ class HttpBulkConsentAdapterTest {
     void usableIsAuthoritativeWhateverTheStatusSays() {
         server.expect(requestTo(BASE + "/api/v1/consents/CONS-2"))
                 .andRespond(withSuccess("""
-                        {"consentId":"CONS-2","participantId":"TPP-001","scopes":["bulk-payment"],
+                        {"consentId":"CONS-2","participantId":"TPP-001","scopes":["INITIATEBULKPAYMENTS"],
                          "status":"AUTHORIZED","expiresAt":"2099-01-01T00:00:00Z","usable":false}
                         """, MediaType.APPLICATION_JSON));
         server.expect(requestTo(BASE + "/api/v1/consents/CONS-3"))
                 .andRespond(withSuccess("""
-                        {"consentId":"CONS-3","participantId":"TPP-001","scopes":["bulk-payment"],
+                        {"consentId":"CONS-3","participantId":"TPP-001","scopes":["INITIATEBULKPAYMENTS"],
                          "status":"SOMETHING_NEW","expiresAt":"2099-01-01T00:00:00Z","usable":true}
                         """, MediaType.APPLICATION_JSON));
 
@@ -79,7 +79,7 @@ class HttpBulkConsentAdapterTest {
     void aResponseWithoutUsableFailsClosed() {
         server.expect(requestTo(BASE + "/api/v1/consents/CONS-4"))
                 .andRespond(withSuccess("""
-                        {"consentId":"CONS-4","participantId":"TPP-001","scopes":["bulk-payment"],
+                        {"consentId":"CONS-4","participantId":"TPP-001","scopes":["INITIATEBULKPAYMENTS"],
                          "status":"AUTHORIZED","expiresAt":"2099-01-01T00:00:00Z"}
                         """, MediaType.APPLICATION_JSON));
 
@@ -140,6 +140,6 @@ class HttpBulkConsentAdapterTest {
 
         assertThatThrownBy(() -> adapter.findById("CONS-1"))
                 .isInstanceOf(ForbiddenException.class)
-                .hasMessageContaining("bulk-payment");
+                .hasMessageContaining("INITIATEBULKPAYMENTS");
     }
 }

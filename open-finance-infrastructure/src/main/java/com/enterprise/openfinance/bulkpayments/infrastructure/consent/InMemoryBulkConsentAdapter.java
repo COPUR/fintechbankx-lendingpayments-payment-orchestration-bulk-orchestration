@@ -21,7 +21,7 @@ public class InMemoryBulkConsentAdapter implements BulkConsentPort {
         data.put("CONS-BULK-001", new BulkConsentContext(
                 "CONS-BULK-001",
                 "TPP-001",
-                Set.of("bulk-payment"),
+                Set.of(BulkConsentContext.INITIATE_BULK_PAYMENTS),
                 Instant.parse("2099-01-01T00:00:00Z"),
                 true
         ));
@@ -29,7 +29,7 @@ public class InMemoryBulkConsentAdapter implements BulkConsentPort {
         data.put("CONS-BULK-EXPIRED", new BulkConsentContext(
                 "CONS-BULK-EXPIRED",
                 "TPP-001",
-                Set.of("bulk-payment"),
+                Set.of(BulkConsentContext.INITIATE_BULK_PAYMENTS),
                 Instant.parse("2026-01-01T00:00:00Z"),
                 true
         ));
@@ -37,7 +37,7 @@ public class InMemoryBulkConsentAdapter implements BulkConsentPort {
         data.put("CONS-BULK-RO", new BulkConsentContext(
                 "CONS-BULK-RO",
                 "TPP-001",
-                Set.of("read-accounts"),
+                Set.of("READACCOUNTS"),
                 Instant.parse("2099-01-01T00:00:00Z"),
                 true
         ));

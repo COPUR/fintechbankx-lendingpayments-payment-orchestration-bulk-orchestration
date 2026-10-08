@@ -3,7 +3,7 @@
 **Actors:** Corporate TPP (ERP), Corporate PSU, ASPSP
 
 ## 1. Prerequisites
-* Corporate Consent with `bulk-payment` permission authorized by required signatories.
+* Corporate Consent with the `INITIATEBULKPAYMENTS` scope authorized by required signatories.
 * A valid bulk file (CSV/XML) adhering to the schema.
 
 ## 2. Test Cases
