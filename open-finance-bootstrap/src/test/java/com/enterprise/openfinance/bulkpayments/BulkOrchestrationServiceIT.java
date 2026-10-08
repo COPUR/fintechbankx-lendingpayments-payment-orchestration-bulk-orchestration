@@ -415,6 +415,35 @@ class BulkOrchestrationServiceIT {
                 .andExpect(status().isBadRequest());
     }
 
+    /**
+     * The ingress gateway overwrites X-Forwarded-Proto/Host/Port; with
+     * server.forward-headers-strategy=framework htu is the public URL the TPP called.
+     */
+    @Test
+    void htuIsTheGatewayForwardedPublicUrl() throws Exception {
+        String fileId = upload("IDEMP-HTU", csv("INS-1," + IBAN + ",10.00"), "PARTIAL_REJECTION");
+        String path = "/open-finance/v1/file-payments/" + fileId;
+
+        String publicProof = proof(TPP_001_KEY, "GET", "https://api.fintechbankx.example:8443" + path,
+                "tpp-001-token", java.util.UUID.randomUUID().toString());
+        mvc.perform(forwarded(get(path)).header("Authorization", "DPoP tpp-001-token").header("DPoP", publicProof))
+                .andExpect(status().isOk());
+
+        String internalProof = proof(TPP_001_KEY, "GET", "http://localhost" + path,
+                "tpp-001-token", java.util.UUID.randomUUID().toString());
+        mvc.perform(forwarded(get(path)).header("Authorization", "DPoP tpp-001-token").header("DPoP", internalProof))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("INVALID_DPOP_PROOF"));
+    }
+
+    private static MockHttpServletRequestBuilder forwarded(MockHttpServletRequestBuilder builder) {
+        return builder.header("X-Forwarded-Proto", "https")
+                .header("X-Forwarded-Host", "api.fintechbankx.example")
+                .header("X-Forwarded-Port", "8443")
+                .header("X-Forwarded-For", "203.0.113.7")
+                .header("X-FAPI-Interaction-ID", "ix-htu");
+    }
+
     @Test
     void dpopProofIsRequiredAndVerifiedOnTheTppApi() throws Exception {
         String fileId = upload("IDEMP-DPOP", csv("INS-1," + IBAN + ",10.00"), "PARTIAL_REJECTION");
