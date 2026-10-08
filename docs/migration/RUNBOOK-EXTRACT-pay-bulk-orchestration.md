@@ -32,30 +32,44 @@ required value fails the render. Flyway creates `sc_pay_bulk_orchestration` on f
 `api/asyncapi/svc-pay-bulk-orchestration.yaml`) is **pending**. After it merges and the platform creates the topics
 (the service never auto-creates them), set `OUTBOX_RELAY_ENABLED=true`.
 
-Relay failure policy (same as svc-rsk-decisioning):
-- Retryable Kafka failures (TimeoutException, NotEnoughReplicasException, NetworkException, any
-  `RetriableException`, or the relay's own send timeout) stop the batch and are retried on the next run. They never
-  count toward parking, so an outage only delays events. A row is parked on a retryable failure only after it has
-  been failing continuously for longer than `openfinance.bulkpayments.outbox.relay.retryable-park-after` (default
-  `PT24H`), measured from its `first_failed_at` (V7). There is no attempt-count cap.
-- Non-retriable failures (RecordTooLarge, Serialization, TopicAuthorization, InvalidTopic, anything not retriable)
-  park the row at once; later rows continue.
+Relay failure policy (ADR-021 decision 4, adr-runbooks #10 at 421f7b5 and the ruling e6dd76a):
+- Payload errors that can never succeed for the row (RecordTooLargeException, SerializationException,
+  InvalidTopicException) park the row at once with `parked_reason = 'PAYLOAD_ERROR'` and the batch continues. A
+  parked row keeps the rest of its bulk file blocked: later events of that file stay PENDING until the parked row is
+  replayed, so a file's events never go out of order. Other files continue.
+- Every other failure (retriable Kafka errors and timeouts, TopicAuthorization, SASL/IAM authentication, a producer
+  that cannot be built, anything unclassified) stops the batch without marking the row or anything after it. The
+  relay backs off (5 s doubling to 5 min) and retries. Such a row is never parked automatically, however long the
+  failure lasts; there is no time ceiling.
+- `last_error`, logs and metric tags carry the exception class only, never record content or identifiers.
 
-Alerts:
+Alerts (names agreed with platform):
 - `outbox_oldest_pending_age_seconds{service="svc-pay-bulk-orchestration"}`: age of the oldest row waiting for the
-  relay. This is the outage alert (for example above 300 s), because retryable failures do not park.
-- `outbox_parked_events`: any value above 0 needs an operator.
+  relay. This pages the owning squad (for example above 300 s), because non-payload failures never park.
+- `outbox_send_failures_total{exception="<class>"}`: failed sends by exception class; the class says where to look
+  (IAM policy or topic ACL for `TopicAuthorizationException`/`SaslAuthenticationException`, brokers or egress for
+  `TimeoutException`/`NetworkException`).
+- `outbox_parked_events`: any value above 0 needs an operator; that file's later events wait for the replay.
 - `outbox_pending_events`: backlog.
 
-Parked outbox events: find the cause in `last_error`, fix it (topic ACL, message size), then replay:
+Manual park (only when a row blocks the relay for a reason no fix will cure, decided by the owning squad). The
+reason is required; the database refuses a park without one:
 
 ```sql
-SELECT event_id, created_seq, topic, attempts, first_failed_at, last_error, parked_at
+UPDATE sc_pay_bulk_orchestration.outbox_event
+SET status = 'PARKED', parked_at = now(), parked_reason = '<ticket>: <why this row cannot be published>'
+WHERE event_id = '<event id>' AND status = 'PENDING';
+```
+
+Parked outbox events: find the cause in `parked_reason` and `last_error`, fix it (message size, topic), then replay:
+
+```sql
+SELECT event_id, created_seq, aggregate_id, topic, attempts, parked_reason, last_error, parked_at
 FROM sc_pay_bulk_orchestration.outbox_event WHERE status = 'PARKED' ORDER BY created_seq;
 
--- first_failed_at must be reset, otherwise the 24 h ceiling parks the row again on its first retryable failure.
+-- Replaying the parked row unblocks the later events of its file.
 UPDATE sc_pay_bulk_orchestration.outbox_event
-SET status = 'PENDING', parked_at = NULL, first_failed_at = NULL, attempts = 0, last_error = NULL
+SET status = 'PENDING', parked_at = NULL, parked_reason = NULL, attempts = 0, last_error = NULL
 WHERE event_id = '<event id>';
 ```
 This service consumes no topics. If a consumer is added it dead-letters to `evt.pay.bulk.dlq.v1`.

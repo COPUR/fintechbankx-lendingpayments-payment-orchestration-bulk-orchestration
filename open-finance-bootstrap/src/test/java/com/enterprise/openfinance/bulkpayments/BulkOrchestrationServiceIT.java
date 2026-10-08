@@ -521,31 +521,64 @@ class BulkOrchestrationServiceIT {
 
     @Test
     @SuppressWarnings("unchecked")
-    void relayRetriesOutagesWithoutParkingAndParksPermanentFailuresAtOnce() throws Exception {
+    void relayNeverMarksOrParksOnOutagesButParksPayloadErrorsWithAReason() throws Exception {
         String fileId = upload("IDEMP-PARK", csv("INS-1," + IBAN + ",10.00"), "PARTIAL_REJECTION");
-        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-                Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), Duration.ofHours(24));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(
                 new org.apache.kafka.common.errors.TimeoutException("Expiring 1 record(s)")));
-
-        for (int run = 0; run < 12; run++) {
-            assertThat(relay.relayOnce()).isZero();
+        for (int run = 0; run < 3; run++) {
+            assertThat(newRelay().relayOnce()).isZero();
         }
-        var pending = jdbc.queryForMap("select status, attempts, first_failed_at, last_error from " + SCHEMA
+        var pending = jdbc.queryForMap("select status, attempts, last_error, parked_reason from " + SCHEMA
                 + ".outbox_event where aggregate_id = ?", fileId);
         assertThat(pending.get("status")).isEqualTo("PENDING");
-        assertThat(pending.get("attempts")).isEqualTo(12);
-        assertThat(pending.get("first_failed_at")).isNotNull();
-        assertThat((String) pending.get("last_error")).startsWith("TimeoutException");
+        assertThat(pending.get("attempts")).isEqualTo(0);
+        assertThat(pending.get("last_error")).isNull();
 
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(
                 new org.apache.kafka.common.errors.RecordTooLargeException("too large")));
-        assertThat(relay.relayOnce()).isZero();
-        var parked = jdbc.queryForMap("select status, parked_at, last_error from " + SCHEMA
+        assertThat(newRelay().relayOnce()).isZero();
+        var parked = jdbc.queryForMap("select status, parked_at, last_error, parked_reason from " + SCHEMA
                 + ".outbox_event where aggregate_id = ?", fileId);
         assertThat(parked.get("status")).isEqualTo("PARKED");
         assertThat(parked.get("parked_at")).isNotNull();
-        assertThat(parked.get("last_error")).isEqualTo("RecordTooLargeException: too large");
+        assertThat(parked.get("last_error")).isEqualTo("RecordTooLargeException");
+        assertThat(parked.get("parked_reason")).isEqualTo("PAYLOAD_ERROR");
+
+        // The database refuses a park without a reason (manual parks must record one).
+        String eventId = jdbc.queryForObject("select event_id::text from " + SCHEMA + ".outbox_event"
+                + " where aggregate_id = ?", String.class, fileId);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.update("update " + SCHEMA + ".outbox_event"
+                        + " set parked_reason = null where event_id = ?::uuid", eventId))
+                .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+
+    private OutboxRelay newRelay() {
+        return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), Clock.systemUTC(), 100,
+                Duration.ofSeconds(5), Duration.ofDays(7), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aParkedEventKeepsTheRestOfItsFileBlockedButNotOtherFiles() throws Exception {
+        String blocked = upload("IDEMP-BLOCK-1", csv("INS-1,AE000,10.00"), "FULL_REJECTION");
+        processor.processNextBatch(); // Accepted then Rejected for the same file
+        String other = upload("IDEMP-BLOCK-2", csv("INS-1," + IBAN + ",10.00"), "PARTIAL_REJECTION");
+        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
+                Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7),
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+        when(kafka.send(any(ProducerRecord.class)))
+                .thenReturn(CompletableFuture.failedFuture(
+                        new org.apache.kafka.common.errors.RecordTooLargeException("too large")))
+                .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
+
+        assertThat(relay.relayOnce()).isEqualTo(1);
+        assertThat(relay.relayOnce()).isZero();
+
+        assertThat(jdbc.queryForList("select status from " + SCHEMA + ".outbox_event where aggregate_id = ?"
+                + " order by created_seq", String.class, blocked)).containsExactly("PARKED", "PENDING");
+        assertThat(jdbc.queryForList("select status from " + SCHEMA + ".outbox_event where aggregate_id = ?",
+                String.class, other)).containsExactly("PUBLISHED");
+        org.mockito.Mockito.verify(kafka, org.mockito.Mockito.times(2)).send(any(ProducerRecord.class));
     }
 
     @Test
@@ -556,7 +589,8 @@ class BulkOrchestrationServiceIT {
         when(kafka.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
         OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
-                Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7), Duration.ofHours(24));
+                Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7),
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
 
         assertThat(relay.relayOnce()).isEqualTo(2);
 

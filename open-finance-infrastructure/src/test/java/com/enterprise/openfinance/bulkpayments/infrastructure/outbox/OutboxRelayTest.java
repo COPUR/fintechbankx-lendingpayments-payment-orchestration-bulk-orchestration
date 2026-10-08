@@ -4,10 +4,14 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.errors.InvalidTopicException;
 import org.apache.kafka.common.errors.NetworkException;
 import org.apache.kafka.common.errors.NotEnoughReplicasException;
+import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.errors.RecordTooLargeException;
+import org.apache.kafka.common.errors.SaslAuthenticationException;
 import org.apache.kafka.common.errors.SerializationException;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.errors.TopicAuthorizationException;
+import io.micrometer.core.instrument.Tag;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
@@ -71,7 +75,9 @@ class OutboxRelayTest {
     }
 
     @Test
-    void retryableFailuresStopTheBatchAndNeverCountTowardParking() {
+    void retriableErrorsStopTheBatchWithoutMarkingAnyRowAndNeverParkHoweverLongTheyLast() {
+        MutableClock clock = new MutableClock(NOW);
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
         OutboxEventJpaEntity failing = row("FILE-1", "evt.pay.bulk.accepted.v1");
         OutboxEventJpaEntity later = row("FILE-2", "evt.pay.bulk.accepted.v1");
         when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
@@ -80,102 +86,175 @@ class OutboxRelayTest {
                 .thenReturn(CompletableFuture.failedFuture(new TimeoutException("Expiring 1 record(s)")))
                 .thenReturn(CompletableFuture.failedFuture(new NotEnoughReplicasException("2 < 3")))
                 .thenReturn(CompletableFuture.failedFuture(new NetworkException("broker unavailable")));
+        OutboxRelay relay = relay(clock, registry);
 
-        OutboxRelay relay = relay(CLOCK);
-        for (int run = 0; run < 50; run++) {
+        // Three days of outage, one attempt after each backoff: no time ceiling, nothing parks.
+        for (int run = 0; run < 60; run++) {
+            clock.set(NOW.plus(Duration.ofHours(run + 1L)));
             assertThat(relay.relayOnce()).isZero();
         }
 
-        // Fifty failed runs of an outage within 24 h: still pending, never parked.
-        assertThat(failing.getStatus()).isEqualTo(OutboxEventJpaEntity.PENDING);
-        assertThat(failing.getParkedAt()).isNull();
-        assertThat(failing.getAttempts()).isEqualTo(50);
-        assertThat(failing.getFirstFailedAt()).isEqualTo(NOW);
-        assertThat(failing.getLastError()).isEqualTo("NetworkException: broker unavailable");
-        assertThat(later.getAttempts()).isZero();
-        verify(kafka, times(50)).send(any(ProducerRecord.class));
+        for (OutboxEventJpaEntity row : List.of(failing, later)) {
+            assertThat(row.getStatus()).isEqualTo(OutboxEventJpaEntity.PENDING);
+            assertThat(row.getParkedAt()).isNull();
+            assertThat(row.getAttempts()).isZero();
+            assertThat(row.getLastError()).isNull();
+        }
+        assertThat(failureCount(registry, "TimeoutException")).isEqualTo(1.0);
+        assertThat(failureCount(registry, "NotEnoughReplicasException")).isEqualTo(1.0);
+        assertThat(failureCount(registry, "NetworkException")).isEqualTo(58.0);
+        verify(kafka, times(60)).send(any(ProducerRecord.class));
     }
 
     @Test
-    void theRelaysOwnSendTimeoutIsRetryable() {
+    void theRelaysOwnSendTimeoutIsNotAPayloadError() {
         OutboxEventJpaEntity row = row("FILE-1", "evt.pay.bulk.accepted.v1");
         when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
         when(outbox.findPendingBatch(100)).thenReturn(List.of(row));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(new CompletableFuture<>());
 
         assertThat(new OutboxRelay(outbox, kafka, TransactionOperations.withoutTransaction(), CLOCK, 100,
-                Duration.ofMillis(5), Duration.ofDays(7), Duration.ofHours(24)).relayOnce()).isZero();
+                Duration.ofMillis(5), Duration.ofDays(7), new SimpleMeterRegistry()).relayOnce()).isZero();
 
         assertThat(row.getStatus()).isEqualTo(OutboxEventJpaEntity.PENDING);
-        assertThat(row.getFirstFailedAt()).isEqualTo(NOW);
+        assertThat(row.getAttempts()).isZero();
     }
 
     @Test
-    void aRowFailingRetryablyForMoreThan24HoursFromItsFirstFailureIsParked() {
-        MutableClock clock = new MutableClock(NOW);
-        OutboxEventJpaEntity stuck = row("FILE-1", "evt.pay.bulk.accepted.v1");
-        OutboxEventJpaEntity later = row("FILE-2", "evt.pay.bulk.accepted.v1");
-        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
-        when(outbox.findPendingBatch(100)).thenReturn(List.of(stuck, later));
-        when(kafka.send(any(ProducerRecord.class))).thenAnswer(call ->
-                ((ProducerRecord<String, String>) call.getArgument(0)).key().equals("FILE-1")
-                        ? CompletableFuture.failedFuture(new TimeoutException("metadata"))
-                        : CompletableFuture.completedFuture(mock(SendResult.class)));
-        OutboxRelay relay = relay(clock);
-
-        assertThat(relay.relayOnce()).isZero();
-        clock.set(NOW.plus(Duration.ofHours(24)));
-        assertThat(relay.relayOnce()).isZero();
-        assertThat(stuck.getStatus()).as("exactly 24 h is still within the ceiling").isEqualTo(OutboxEventJpaEntity.PENDING);
-
-        clock.set(NOW.plus(Duration.ofHours(24)).plusSeconds(1));
-        assertThat(relay.relayOnce()).isEqualTo(1);
-
-        assertThat(stuck.getStatus()).isEqualTo(OutboxEventJpaEntity.PARKED);
-        assertThat(stuck.getParkedAt()).isEqualTo(NOW.plus(Duration.ofHours(24)).plusSeconds(1));
-        assertThat(stuck.getFirstFailedAt()).isEqualTo(NOW);
-        assertThat(stuck.getAttempts()).isEqualTo(3);
-        assertThat(later.getStatus()).isEqualTo(OutboxEventJpaEntity.PUBLISHED);
-    }
-
-    @Test
-    void nonRetryableFailuresParkAtOnceAndLaterRowsStillPublish() {
-        List<RuntimeException> permanent = List.of(
+    void payloadErrorsParkTheRowAndTheBatchContinues() {
+        List<RuntimeException> payload = List.of(
                 new RecordTooLargeException("too large"),
                 new SerializationException("cannot serialise"),
-                new TopicAuthorizationException("denied"),
-                new InvalidTopicException("bad topic"),
-                new IllegalStateException("unexpected"));
-        for (RuntimeException failure : permanent) {
+                new InvalidTopicException("bad topic"));
+        for (RuntimeException failure : payload) {
             OutboxEventJpaEntity poison = row("FILE-1", "evt.pay.bulk.accepted.v1");
-            OutboxEventJpaEntity later = row("FILE-2", "evt.pay.bulk.accepted.v1");
+            OutboxEventJpaEntity other = row("FILE-2", "evt.pay.bulk.accepted.v1");
             SpringDataOutboxRepository repo = mock(SpringDataOutboxRepository.class);
             KafkaTemplate<String, String> template = mock(KafkaTemplate.class);
+            SimpleMeterRegistry registry = new SimpleMeterRegistry();
             when(repo.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
-            when(repo.findPendingBatch(100)).thenReturn(List.of(poison, later));
+            when(repo.findPendingBatch(100)).thenReturn(List.of(poison, other));
             when(template.send(any(ProducerRecord.class)))
                     .thenReturn(CompletableFuture.failedFuture(failure))
                     .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
 
             assertThat(new OutboxRelay(repo, template, TransactionOperations.withoutTransaction(), CLOCK, 100,
-                    Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofHours(24)).relayOnce())
-                    .as(failure.getClass().getSimpleName()).isEqualTo(1);
+                    Duration.ofSeconds(1), Duration.ofDays(7), registry)
+                    .relayOnce()).as(failure.getClass().getSimpleName()).isEqualTo(1);
 
-            assertThat(poison.getStatus()).as(failure.getClass().getSimpleName()).isEqualTo(OutboxEventJpaEntity.PARKED);
+            String name = failure.getClass().getSimpleName();
+            assertThat(poison.getStatus()).as(name).isEqualTo(OutboxEventJpaEntity.PARKED);
             assertThat(poison.getParkedAt()).isEqualTo(NOW);
+            assertThat(poison.getParkedReason()).isEqualTo(OutboxEventJpaEntity.PAYLOAD_ERROR);
             assertThat(poison.getAttempts()).isEqualTo(1);
-            assertThat(poison.getLastError()).startsWith(failure.getClass().getSimpleName() + ": ");
-            assertThat(later.getStatus()).isEqualTo(OutboxEventJpaEntity.PUBLISHED);
+            // Only the exception class: Kafka messages may echo record content.
+            assertThat(poison.getLastError()).isEqualTo(name);
+            assertThat(other.getStatus()).isEqualTo(OutboxEventJpaEntity.PUBLISHED);
+            assertThat(failureCount(registry, name)).isEqualTo(1.0);
         }
     }
 
     @Test
-    void classifiesFailuresThroughTheirCauses() {
-        assertThat(OutboxRelay.isRetryable(new ExecutionException(new NotEnoughReplicasException("x")))).isTrue();
-        assertThat(OutboxRelay.isRetryable(new java.util.concurrent.TimeoutException())).isTrue();
-        assertThat(OutboxRelay.isRetryable(new ExecutionException(new RecordTooLargeException("x")))).isFalse();
+    void aParkedRowKeepsTheRestOfItsAggregateBlocked() {
+        OutboxEventJpaEntity poison = row("FILE-1", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity sameFile = row("FILE-1", "evt.pay.bulk.rejected.v1");
+        OutboxEventJpaEntity otherFile = row("FILE-2", "evt.pay.bulk.accepted.v1");
+        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
+        when(outbox.findPendingBatch(100)).thenReturn(List.of(poison, sameFile, otherFile));
+        when(kafka.send(any(ProducerRecord.class)))
+                .thenReturn(CompletableFuture.failedFuture(new RecordTooLargeException("too large")))
+                .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
+
+        assertThat(relay(CLOCK, new SimpleMeterRegistry()).relayOnce()).isEqualTo(1);
+
+        assertThat(poison.getStatus()).isEqualTo(OutboxEventJpaEntity.PARKED);
+        assertThat(sameFile.getStatus()).isEqualTo(OutboxEventJpaEntity.PENDING);
+        assertThat(sameFile.getAttempts()).isZero();
+        assertThat(otherFile.getStatus()).isEqualTo(OutboxEventJpaEntity.PUBLISHED);
+        verify(kafka, times(2)).send(any(ProducerRecord.class));
+    }
+
+    @Test
+    void authorizationErrorsStopTheBatchWithoutMarkingAnyRowThenBackOff() {
+        assertStopsWithoutMarking(new TopicAuthorizationException("denied"));
+        assertStopsWithoutMarking(new SaslAuthenticationException("IAM refused"));
+    }
+
+    @Test
+    void unclassifiedErrorsStopTheBatchWithoutMarkingAnyRowThenBackOff() {
+        assertStopsWithoutMarking(new IllegalStateException("unexpected"));
+        // A producer that cannot even be built throws from send() itself.
+        assertStopsWithoutMarking(new KafkaException("Failed to construct kafka producer"));
+    }
+
+    private void assertStopsWithoutMarking(RuntimeException failure) {
+        MutableClock clock = new MutableClock(NOW);
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        OutboxEventJpaEntity first = row("FILE-1", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity later = row("FILE-2", "evt.pay.bulk.accepted.v1");
+        SpringDataOutboxRepository repo = mock(SpringDataOutboxRepository.class);
+        KafkaTemplate<String, String> template = mock(KafkaTemplate.class);
+        when(repo.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
+        when(repo.findPendingBatch(100)).thenReturn(List.of(first, later));
+        when(template.send(any(ProducerRecord.class))).thenThrow(failure)
+                .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
+        OutboxRelay relay = relay(repo, template, clock, registry);
+        String name = failure.getClass().getSimpleName();
+
+        assertThat(relay.relayOnce()).as(name).isZero();
+
+        for (OutboxEventJpaEntity row : List.of(first, later)) {
+            assertThat(row.getStatus()).isEqualTo(OutboxEventJpaEntity.PENDING);
+            assertThat(row.getAttempts()).isZero();
+            assertThat(row.getLastError()).isNull();
+        }
+        assertThat(failureCount(registry, name)).isEqualTo(1.0);
+        // Tagged by exception class only: no topic, event, file, payee or customer identifiers.
+        assertThat(registry.get(OutboxRelay.FAILURE_COUNTER).counters()).allSatisfy(counter ->
+                assertThat(counter.getId().getTags()).extracting(Tag::getKey).containsExactly("exception"));
+
+        // Backoff: the next run within the window does not touch Kafka.
+        assertThat(relay.relayOnce()).isZero();
+        verify(template, times(1)).send(any(ProducerRecord.class));
+
+        clock.set(NOW.plus(OutboxRelay.INITIAL_BACKOFF));
+        assertThat(relay.relayOnce()).isEqualTo(2);
+        assertThat(first.getStatus()).isEqualTo(OutboxEventJpaEntity.PUBLISHED);
+    }
+
+    @Test
+    void backoffDoublesUpToItsCeilingAndResetsAfterASuccess() {
+        MutableClock clock = new MutableClock(NOW);
+        OutboxEventJpaEntity row = row("FILE-1", "evt.pay.bulk.accepted.v1");
+        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
+        when(outbox.findPendingBatch(100)).thenReturn(List.of(row));
+        when(kafka.send(any(ProducerRecord.class))).thenThrow(new IllegalStateException("x"));
+        OutboxRelay relay = relay(clock, new SimpleMeterRegistry());
+
+        assertThat(relay.relayOnce()).isZero();
+        assertThat(relay.pausedUntil()).isEqualTo(NOW.plus(OutboxRelay.INITIAL_BACKOFF));
+        for (int run = 0; run < 10; run++) {
+            clock.set(relay.pausedUntil());
+            relay.relayOnce();
+        }
+        assertThat(Duration.between(clock.instant(), relay.pausedUntil())).isEqualTo(OutboxRelay.MAX_BACKOFF);
+    }
+
+    @Test
+    void metricNamesAreThoseAgreedWithPlatformForAlerting() {
+        assertThat(OutboxRelay.FAILURE_COUNTER).isEqualTo("outbox.send.failures");
+    }
+
+    @Test
+    void classifiesOnlyPayloadErrorsAsParkable() {
+        assertThat(OutboxRelay.isPayloadError(new ExecutionException(new RecordTooLargeException("x")))).isTrue();
+        assertThat(OutboxRelay.isPayloadError(new ExecutionException(new SerializationException("x")))).isTrue();
+        assertThat(OutboxRelay.isPayloadError(new ExecutionException(new InvalidTopicException("x")))).isTrue();
+        assertThat(OutboxRelay.isPayloadError(new ExecutionException(new TopicAuthorizationException("x")))).isFalse();
+        assertThat(OutboxRelay.isPayloadError(new ExecutionException(new NotEnoughReplicasException("x")))).isFalse();
+        assertThat(OutboxRelay.isPayloadError(new java.util.concurrent.TimeoutException())).isFalse();
         assertThat(OutboxRelay.describe(new ExecutionException(new RecordTooLargeException("big"))))
-                .isEqualTo("RecordTooLargeException: big");
+                .isEqualTo("RecordTooLargeException");
     }
 
     @Test
@@ -200,7 +279,8 @@ class OutboxRelayTest {
         assertThat(relay(CLOCK).relayOnce()).isZero();
 
         assertThat(Thread.interrupted()).isTrue();
-        assertThat(row.getLastError()).isEqualTo("interrupted");
+        assertThat(row.getLastError()).isNull();
+        assertThat(row.getAttempts()).isZero();
     }
 
     @Test
@@ -213,16 +293,26 @@ class OutboxRelayTest {
     @Test
     void rejectsNonPositiveLimits() {
         assertThatThrownBy(() -> new OutboxRelay(outbox, kafka, TransactionOperations.withoutTransaction(), CLOCK,
-                0, Duration.ofSeconds(1), Duration.ofDays(1), Duration.ofHours(24)))
-                .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new OutboxRelay(outbox, kafka, TransactionOperations.withoutTransaction(), CLOCK,
-                100, Duration.ofSeconds(1), Duration.ofDays(1), Duration.ZERO))
+                0, Duration.ofSeconds(1), Duration.ofDays(1), new SimpleMeterRegistry()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
     private OutboxRelay relay(Clock clock) {
-        return new OutboxRelay(outbox, kafka, TransactionOperations.withoutTransaction(), clock, 100,
-                Duration.ofSeconds(1), Duration.ofDays(7), Duration.ofHours(24));
+        return relay(clock, new SimpleMeterRegistry());
+    }
+
+    private OutboxRelay relay(Clock clock, SimpleMeterRegistry registry) {
+        return relay(outbox, kafka, clock, registry);
+    }
+
+    private static OutboxRelay relay(SpringDataOutboxRepository repo, KafkaTemplate<String, String> template,
+                                     Clock clock, SimpleMeterRegistry registry) {
+        return new OutboxRelay(repo, template, TransactionOperations.withoutTransaction(), clock, 100,
+                Duration.ofSeconds(1), Duration.ofDays(7), registry);
+    }
+
+    private static double failureCount(SimpleMeterRegistry registry, String exception) {
+        return registry.get(OutboxRelay.FAILURE_COUNTER).tag("exception", exception).counter().count();
     }
 
     private static final class MutableClock extends Clock {

@@ -156,10 +156,8 @@ openfinance:
         enabled: ${OUTBOX_RELAY_ENABLED:false}
         interval: PT1S
         batch-size: 100
-        # Retryable Kafka failures (timeouts, NotEnoughReplicas, any RetriableException) never count;
-        # a row is parked only after failing continuously for longer than this (from first_failed_at).
-        # Non-retriable failures park at once. Alert on outbox_oldest_pending_age_seconds.
-        retryable-park-after: PT24H
+        # ADR-021 decision 4: only payload errors park a row; every other failure stops the batch
+        # without marking anything and backs off. Alert on outbox_oldest_pending_age_seconds.
         # Longer than delivery.timeout.ms, so the relay never gives up on a send the producer still retries.
         send-timeout: PT35S
 

@@ -19,10 +19,16 @@ public interface SpringDataOutboxRepository extends JpaRepository<OutboxEventJpa
     @Query(value = "select pg_try_advisory_xact_lock(:key)", nativeQuery = true)
     boolean tryRelayLock(@Param("key") long key);
 
+    /**
+     * Pending rows in insertion order, skipping every row of an aggregate that has a
+     * PARKED row: a parked event keeps its file blocked until it is replayed (ADR-021 decision 4).
+     */
     @Query(value = """
-            select * from outbox_event
-            where status = 'PENDING'
-            order by created_seq
+            select * from outbox_event o
+            where o.status = 'PENDING'
+              and not exists (select 1 from outbox_event p
+                              where p.status = 'PARKED' and p.aggregate_id = o.aggregate_id)
+            order by o.created_seq
             limit :batchSize
             """, nativeQuery = true)
     List<OutboxEventJpaEntity> findPendingBatch(@Param("batchSize") int batchSize);

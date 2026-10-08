@@ -21,6 +21,8 @@ public class OutboxEventJpaEntity {
     public static final String PENDING = "PENDING";
     public static final String PUBLISHED = "PUBLISHED";
     public static final String PARKED = "PARKED";
+    /** parked_reason the relay records for a payload error (ADR-021 decision 4). */
+    public static final String PAYLOAD_ERROR = "PAYLOAD_ERROR";
 
     @Id
     @Column(name = "event_id")
@@ -64,9 +66,9 @@ public class OutboxEventJpaEntity {
     @Column(name = "parked_at")
     private Instant parkedAt;
 
-    /** First failed send; the retryable-failure ceiling is measured from here. */
-    @Column(name = "first_failed_at")
-    private Instant firstFailedAt;
+    /** Why the row is parked: PAYLOAD_ERROR from the relay, or the operator's recorded reason. */
+    @Column(name = "parked_reason", length = 256)
+    private String parkedReason;
 
     @Column(name = "attempts", nullable = false)
     private int attempts;
@@ -108,7 +110,7 @@ public class OutboxEventJpaEntity {
     public String getStatus() { return status; }
     public Instant getPublishedAt() { return publishedAt; }
     public Instant getParkedAt() { return parkedAt; }
-    public Instant getFirstFailedAt() { return firstFailedAt; }
+    public String getParkedReason() { return parkedReason; }
     public int getAttempts() { return attempts; }
     public String getLastError() { return lastError; }
 
@@ -119,18 +121,16 @@ public class OutboxEventJpaEntity {
         this.lastError = null;
     }
 
-    /** Records a failed send; the first one starts the retryable-failure clock. */
-    void markFailed(String error, Instant at) {
-        if (firstFailedAt == null) {
-            this.firstFailedAt = at;
-        }
+    /** Records a failed send (payload errors only; other failures mark nothing). */
+    void markFailed(String error) {
         this.attempts++;
         this.lastError = error == null ? null : error.substring(0, Math.min(error.length(), 512));
     }
 
     /** The relay gave up on this row; it is skipped until an operator replays it. */
-    void park(Instant at) {
+    void park(Instant at, String reason) {
         this.status = PARKED;
         this.parkedAt = at;
+        this.parkedReason = reason;
     }
 }
