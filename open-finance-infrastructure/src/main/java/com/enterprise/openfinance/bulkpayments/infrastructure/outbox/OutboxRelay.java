@@ -38,7 +38,9 @@ import java.util.concurrent.TimeUnit;
  *   parked row keeps its aggregate blocked: later rows of the same file are not
  *   sent (here and in {@link SpringDataOutboxRepository#findPendingBatch}) until
  *   an operator replays it, so a file's events never go out of order.</li>
- *   <li>Everything else (retriable Kafka errors and timeouts, authorization and
+ *   <li>Everything else (retriable Kafka errors and timeouts, a missing topic or
+ *   partition (UnknownTopicOrPartitionException; governance ruling: back off,
+ *   alert, resume), authorization and
  *   SASL/IAM failures, a producer that cannot be built, anything unclassified):
  *   the batch stops without marking the row or anything after it and the relay
  *   backs off ({@link #INITIAL_BACKOFF} doubling to {@link #MAX_BACKOFF}). Such a

@@ -136,14 +136,16 @@ ADR-021 decision 4 (adr-runbooks #10 at 421f7b5 and the ruling e6dd76a):
   InvalidTopicException) park the row at once with `parked_reason = 'PAYLOAD_ERROR'` and the batch continues. A
   parked row keeps the rest of its bulk file blocked: later events of that file stay PENDING until the parked row is
   replayed, so a file's events never go out of order. Other files continue.
-- Every other failure (retriable Kafka errors and timeouts, TopicAuthorization, SASL/IAM authentication, a producer
+- Every other failure (retriable Kafka errors and timeouts, a missing topic or partition
+  (`UnknownTopicOrPartitionException`, or a metadata `TimeoutException` while the topic does not exist; governance
+  ruling: back off, alert, resume once the topic exists), TopicAuthorization, SASL/IAM authentication, a producer
   that cannot be built, anything unclassified) stops the batch without marking the row or anything after it. The
   relay backs off (5 s doubling to 5 min) and retries. Such a row is never parked automatically, however long the
   failure lasts; there is no time ceiling.
 - `last_error`, logs and metric tags carry the exception class only, never record content or identifiers.
 - `outbox_send_failures_total{exception="<class>"}` says where to look: IAM policy or topic ACL for
-  `TopicAuthorizationException`/`SaslAuthenticationException`, brokers or egress for
-  `TimeoutException`/`NetworkException`.
+  `TopicAuthorizationException`/`SaslAuthenticationException`, brokers, egress or a topic not yet created for
+  `TimeoutException`/`NetworkException`/`UnknownTopicOrPartitionException`.
 
 Manual park (only when a row blocks the relay for a reason no fix will cure, decided by the owner squad). The
 reason is required; the database refuses a park without one. The relay counts the park once on its next run

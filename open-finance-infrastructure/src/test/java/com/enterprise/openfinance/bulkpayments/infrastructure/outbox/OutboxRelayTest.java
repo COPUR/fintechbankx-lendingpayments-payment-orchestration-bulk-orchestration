@@ -218,6 +218,19 @@ class OutboxRelayTest {
         assertStopsWithoutMarking(new SaslAuthenticationException("IAM refused"));
     }
 
+    /**
+     * Governance ruling: a missing topic or partition (UnknownTopicOrPartitionException, e.g. the topic was not
+     * created yet or was deleted) stops the relay without parking: back off, alert, resume once the topic exists.
+     * An invalid topic name (InvalidTopicException) stays a payload error and parks.
+     */
+    @Test
+    void anUnknownTopicStopsTheRelayAndNeverParksButAnInvalidTopicParks() {
+        assertStopsWithoutMarking(new org.apache.kafka.common.errors.UnknownTopicOrPartitionException("not found"));
+        assertThat(OutboxRelay.isPayloadError(new ExecutionException(
+                new org.apache.kafka.common.errors.UnknownTopicOrPartitionException("x")))).isFalse();
+        assertThat(OutboxRelay.isPayloadError(new ExecutionException(new InvalidTopicException("x")))).isTrue();
+    }
+
     @Test
     void unclassifiedErrorsStopTheBatchWithoutMarkingAnyRowThenBackOff() {
         assertStopsWithoutMarking(new IllegalStateException("unexpected"));
