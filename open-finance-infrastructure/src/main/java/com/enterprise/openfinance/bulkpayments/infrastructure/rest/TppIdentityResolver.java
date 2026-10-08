@@ -7,13 +7,14 @@ import org.springframework.security.oauth2.server.resource.authentication.JwtAut
 
 /**
  * The TPP a request acts for. With a validated access token the TPP is the
- * token's {@code tpp_id} claim, else its {@code azp} (the OAuth client); an
+ * token's {@code azp} (the TPP's OAuth client, as the platform issues it); any
+ * {@code tpp_id} claim is ignored, because nothing on the platform vouches for it. An
  * {@code x-fapi-financial-id} header that names another TPP is refused. The
  * header alone is accepted only without an authenticated token (unit tests).
  */
 public final class TppIdentityResolver {
 
-    static final String TPP_CLAIM = "tpp_id";
+    static final String TPP_CLAIM = "azp";
 
     private TppIdentityResolver() {
     }
@@ -40,10 +41,7 @@ public final class TppIdentityResolver {
         }
         String tpp = jwt.getToken().getClaimAsString(TPP_CLAIM);
         if (tpp == null || tpp.isBlank()) {
-            tpp = jwt.getToken().getClaimAsString("azp");
-        }
-        if (tpp == null || tpp.isBlank()) {
-            throw new ForbiddenException("Access token names no TPP (tpp_id or azp)");
+            throw new ForbiddenException("Access token names no TPP (azp)");
         }
         return tpp;
     }

@@ -36,11 +36,18 @@ class TppIdentityAndInteractionIdTest {
     }
 
     @Test
-    void explicitTppClaimWinsOverAzp() {
+    void theTppIsTheAuthorisedPartyNeverATppIdClaim() {
+        // Platform tokens name the TPP's OAuth client in azp; a tpp_id claim is not trusted.
         authenticate(Jwt.withTokenValue("t").header("alg", "none")
-                .claim("azp", "gateway-client").claim("tpp_id", "TPP-002").build());
+                .claim("azp", "TPP-001").claim("tpp_id", "TPP-002").build());
 
-        assertThat(TppIdentityResolver.resolve(" ")).isEqualTo("TPP-002");
+        assertThat(TppIdentityResolver.resolve(" ")).isEqualTo("TPP-001");
+        assertThatThrownBy(() -> TppIdentityResolver.resolve("TPP-002")).isInstanceOf(ForbiddenException.class);
+
+        authenticate(Jwt.withTokenValue("t").header("alg", "none").claim("tpp_id", "TPP-002").build());
+        assertThatThrownBy(() -> TppIdentityResolver.resolve(null))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessage("Access token names no TPP (azp)");
     }
 
     @Test
