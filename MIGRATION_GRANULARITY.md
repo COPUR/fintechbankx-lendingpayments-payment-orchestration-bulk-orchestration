@@ -18,3 +18,10 @@
 - Follow-up refactoring may be needed to remove residual cross-context coupling.
 - Build artifacts and local machine files are excluded by policy.
 
+
+## Deployable extraction (Proposed)
+
+- The seed's residue from other contexts was removed (see the README "Scope cleanup" table).
+- `infra/terraform/bulk-payments-service` was replaced by `deploy/terraform`.
+- The monolith stored bulk data in memory only, so no data migration or backfill is needed
+  (`docs/migration/RUNBOOK-EXTRACT-pay-bulk-orchestration.md`).

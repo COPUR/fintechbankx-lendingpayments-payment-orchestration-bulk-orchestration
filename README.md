@@ -76,3 +76,53 @@ This repository participates in the FinTechBankX cell-based resilience program.
 - Plan: docs/architecture/CELL_BASED_ARCHITECTURE_IMPLEMENTATION_PLAN.md
 - Backlog: docs/project-management/CELL_ARCHITECTURE_BACKLOG_BOARD.md
 <!-- cell-architecture-end -->
+
+## Service metadata (naming standard)
+
+| Tag | Value |
+|---|---|
+| bounded_context | payment_bulk_orchestration (capability `bulkpayments`) |
+| owning_squad | Recurring and Bulk Payments Squad |
+| owning_tribe | Lending & Payments Tribe |
+| review_cadence | quarterly |
+| data_owner | Recurring and Bulk Payments Squad (schema `sc_pay_bulk_orchestration`) |
+| upstream_dependencies | svc-of-consent-authorization (consent reads), Keycloak realm `fintechbankx`, Kafka (MSK or Strimzi) |
+| published_events | `evt.pay.bulk.file-accepted.v1` (`Payments.BulkFile.Accepted.v1`), `evt.pay.bulk.file-completed.v1` (`Payments.BulkFile.Completed.v1`), `evt.pay.bulk.file-rejected.v1` (`Payments.BulkFile.Rejected.v1`) |
+| consumed_events | none (any future consumer dead-letters to `evt.pay.bulk.dlq.v1`) |
+
+Runtime names: service id `svc-pay-bulk-orchestration`, `spring.application.name` `app.pay.bulk-orchestration`,
+Helm release, service account and image `payment-bulk-orchestration-service` in namespace `payments`,
+label `fintechbankx.io/app: app-pay-bulk-orchestration`, database `db_pay_bulk_orchestration_<env>`.
+
+## Scope cleanup (residue removed from the extraction seed)
+
+| Removed | Owner |
+|---|---|
+| Consent models, `ConsentController`, `DistributedConsentService`, Redis consent cache | fintechbankx-openfinance-consent-auth-service |
+| `OpenFinanceAccountController` and account data | fintechbankx-openfinance-retail-data-personal-financial / corporate-data-business-financial |
+| `OpenFinanceLoanController` | fintechbankx-lendingpayments-loan-lifecycle-core |
+| CBUAE participant directory adapter and port | fintechbankx-openfinance-payee-metadata-banking-metadata |
+| Analytics (Mongo), CQRS projections, `PostgreSQLEventStore`, monitoring | fintechbankx-platform-observability-sre-operations / platform event streaming |
+| Keycloak `FAPIAuthenticator`, PCI guard | fintechbankx-platform-identity-iam-keycloak-ldap / platform mesh security |
+| `application/saga` | payment initiation and settlement (svc-pay-initiation-settlement) |
+| `infra/terraform/bulk-payments-service` (pointed at a missing module path) | replaced by `deploy/terraform` |
+| In-memory file, report and idempotency adapters | replaced by Postgres adapters |
+
+## Run, test and deploy
+
+```bash
+./gradlew --no-daemon clean check            # unit + ArchUnit + coverage gate; Postgres ITs skip
+TEST_DB_URL=jdbc:postgresql://localhost:5432/<db> TEST_DB_USERNAME=<user> TEST_DB_PASSWORD=<pw> \
+  ./gradlew --no-daemon clean check          # also runs the Postgres ITs (CI=true without a DB fails)
+```
+
+Local boot without Kafka: set `DB_URL`, `DB_USERNAME`, `SPRING_DATASOURCE_PASSWORD`,
+`CONSENT_ADAPTER=in-memory` and keep `OUTBOX_RELAY_ENABLED=false`, then
+`java -jar open-finance-bootstrap/build/libs/payment-bulk-orchestration-service.jar`
+(API on 8080, management on 8081).
+
+- Endpoints: `POST /open-finance/v1/file-payments`, `GET /open-finance/v1/file-payments/{fileId}`, `GET /open-finance/v1/file-payments/{fileId}/report`
+- Events contract: [AsyncAPI](./api/asyncapi/svc-pay-bulk-orchestration.yaml)
+- Deployment: [Helm chart](./deploy/helm/payment-bulk-orchestration-service), [Terraform](./deploy/terraform), [deployment notes](./docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md)
+- Migration: [runbook](./docs/migration/RUNBOOK-EXTRACT-pay-bulk-orchestration.md) (no backfill; catalog PR pending), [regression mapping](./docs/migration/REGRESSION_MAPPING.md)
+- Mesh: the chart ships no Istio policy. The mesh owners must ALLOW `cluster.local/ns/istio-ingress/sa/istio-ingressgateway` to this service, and `cluster.local/ns/payments/sa/payment-bulk-orchestration-service` to the consent service.

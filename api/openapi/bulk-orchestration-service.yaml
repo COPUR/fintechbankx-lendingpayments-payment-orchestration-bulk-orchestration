@@ -135,13 +135,17 @@ components:
     JwsSignature:
       name: x-jws-signature
       in: header
-      required: true
+      required: false
+      description: Accepted but not verified by this service yet.
       schema:
         type: string
     Dpop:
       name: DPoP
       in: header
       required: true
+      description: >-
+        Must be present. The proof is not cryptographically validated or bound
+        to the access token by this service (sender-constraining is not enforced).
       schema:
         type: string
   schemas:

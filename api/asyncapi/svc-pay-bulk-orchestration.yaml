@@ -1,0 +1,372 @@
+# AsyncAPI contract for svc-pay-bulk-orchestration (provider copy).
+# Status: Proposed. This repository owns the contract; the asyncapi catalog
+# (fintechbankx-governance-api-contracts-asyncapi-catalog) mirrors it in a
+# separate PR. The envelope schema is inlined here so the file validates on its
+# own; it matches asyncapi/common/event-envelope.yaml of the catalog.
+# Implementation: open-finance-infrastructure .../outbox/BulkFileEventEnvelopeFactory.java
+# Validate: npx -y @asyncapi/cli@2.13.0 validate api/asyncapi/svc-pay-bulk-orchestration.yaml
+
+asyncapi: 3.0.0
+id: urn:fintechbankx:asyncapi:svc-pay-bulk-orchestration
+info:
+  title: svc-pay-bulk-orchestration events
+  version: 1.0.0
+  description: |-
+    Event contract for svc-pay-bulk-orchestration (repository fintechbankx-lendingpayments-payment-orchestration-bulk-orchestration, canonical name fintechbankx-payments-bulk-orchestration-service).
+
+    Status: Proposed. Owner: Recurring and Bulk Payments Squad, Lending and Payments Tribe. Event namespace: `evt.pay.bulk`.
+
+    Events are raised by the BulkFile aggregate and written through a transactional outbox (sc_pay_bulk_orchestration.outbox_event) in the same transaction as the file; a relay publishes them in order. The record key is the aggregateId (the file id). Payloads carry ids, counts and amounts only; payee IBANs and item lines are never published (read them from GET /open-finance/v1/file-payments/{fileId}/report).
+
+    Amounts are decimal strings with at least two decimals and no rounding. The upload CSV carries no currency; the currency is not part of v1 (open question in the runbook).
+
+    Adding an optional field is a minor change; any removal, rename or type change is a new major version on a new topic with dual-publish.
+  tags:
+  - name: payments
+  - name: evt.pay.bulk
+  x-service-id: svc-pay-bulk-orchestration
+  x-event-namespace: evt.pay.bulk
+  x-owning-squad: Recurring and Bulk Payments Squad
+defaultContentType: application/json
+servers:
+  kafka:
+    host: '{bootstrapServers}'
+    protocol: kafka-secure
+    description: FinTechBankX event platform cluster (Amazon MSK with IAM auth on AWS, Strimzi with mutual TLS in-cluster).
+    variables:
+      bootstrapServers:
+        description: Bootstrap servers, injected per environment by the platform.
+    security:
+    - $ref: '#/components/securitySchemes/mtls'
+channels:
+  fileAccepted:
+    address: evt.pay.bulk.file-accepted.v1
+    title: evt.pay.bulk.file-accepted.v1
+    description: Payments.BulkFile.Accepted.v1. An uploaded bulk file passed consent, size, hash and schema checks; its items are stored and processing starts.
+    messages:
+      BulkFileAccepted:
+        $ref: '#/components/messages/BulkFileAccepted'
+    bindings:
+      kafka:
+        topic: evt.pay.bulk.file-accepted.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+  fileCompleted:
+    address: evt.pay.bulk.file-completed.v1
+    title: evt.pay.bulk.file-completed.v1
+    description: Payments.BulkFile.Completed.v1. Every item of the file was processed and at least one item was accepted (outcome COMPLETED or PARTIALLY_ACCEPTED).
+    messages:
+      BulkFileCompleted:
+        $ref: '#/components/messages/BulkFileCompleted'
+    bindings:
+      kafka:
+        topic: evt.pay.bulk.file-completed.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+  fileRejected:
+    address: evt.pay.bulk.file-rejected.v1
+    title: evt.pay.bulk.file-rejected.v1
+    description: Payments.BulkFile.Rejected.v1. Every item of the file was processed and none was accepted (invalid items, or one invalid item in FULL_REJECTION mode).
+    messages:
+      BulkFileRejected:
+        $ref: '#/components/messages/BulkFileRejected'
+    bindings:
+      kafka:
+        topic: evt.pay.bulk.file-rejected.v1
+        partitions: 3
+        replicas: 3
+        topicConfiguration:
+          cleanup.policy:
+          - delete
+          retention.ms: 604800000
+          max.message.bytes: 1048576
+        bindingVersion: 0.5.0
+operations:
+  publishBulkFileAccepted:
+    action: send
+    title: Publish Payments.BulkFile.Accepted.v1
+    summary: svc-pay-bulk-orchestration publishes Payments.BulkFile.Accepted.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/fileAccepted'
+    messages:
+    - $ref: '#/channels/fileAccepted/messages/BulkFileAccepted'
+  publishBulkFileCompleted:
+    action: send
+    title: Publish Payments.BulkFile.Completed.v1
+    summary: svc-pay-bulk-orchestration publishes Payments.BulkFile.Completed.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/fileCompleted'
+    messages:
+    - $ref: '#/channels/fileCompleted/messages/BulkFileCompleted'
+  publishBulkFileRejected:
+    action: send
+    title: Publish Payments.BulkFile.Rejected.v1
+    summary: svc-pay-bulk-orchestration publishes Payments.BulkFile.Rejected.v1 through its transactional outbox.
+    channel:
+      $ref: '#/channels/fileRejected'
+    messages:
+    - $ref: '#/channels/fileRejected/messages/BulkFileRejected'
+components:
+  securitySchemes:
+    mtls:
+      type: X509
+      description: Mutual TLS (Strimzi) or IAM over TLS (MSK) with platform-issued identities.
+  messages:
+    BulkFileAccepted:
+      name: BulkFileAccepted
+      title: Payments.BulkFile.Accepted.v1
+      summary: An uploaded bulk file passed consent, size, hash and schema checks; its items are stored and processing starts.
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Payments.BulkFile.Accepted.v1
+            producer:
+              const: svc-pay-bulk-orchestration
+            data:
+              $ref: '#/components/schemas/BulkFileAcceptedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (the bulk file id).
+          bindingVersion: 0.5.0
+      x-source-class: com.enterprise.openfinance.bulkpayments.domain.event.BulkFileAccepted
+    BulkFileCompleted:
+      name: BulkFileCompleted
+      title: Payments.BulkFile.Completed.v1
+      summary: Every item of the file was processed and at least one item was accepted (outcome COMPLETED or PARTIALLY_ACCEPTED).
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Payments.BulkFile.Completed.v1
+            producer:
+              const: svc-pay-bulk-orchestration
+            data:
+              $ref: '#/components/schemas/BulkFileCompletedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (the bulk file id).
+          bindingVersion: 0.5.0
+      x-source-class: com.enterprise.openfinance.bulkpayments.domain.event.BulkFileCompleted
+    BulkFileRejected:
+      name: BulkFileRejected
+      title: Payments.BulkFile.Rejected.v1
+      summary: Every item of the file was processed and none was accepted (invalid items, or one invalid item in FULL_REJECTION mode).
+      contentType: application/json
+      headers:
+        $ref: '#/components/schemas/EventHeaders'
+      payload:
+        allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+        - type: object
+          properties:
+            eventType:
+              const: Payments.BulkFile.Rejected.v1
+            producer:
+              const: svc-pay-bulk-orchestration
+            data:
+              $ref: '#/components/schemas/BulkFileRejectedData'
+      bindings:
+        kafka:
+          key:
+            type: string
+            description: aggregateId (the bulk file id).
+          bindingVersion: 0.5.0
+      x-source-class: com.enterprise.openfinance.bulkpayments.domain.event.BulkFileRejected
+  schemas:
+    EventEnvelope:
+      type: object
+      description: >-
+        Standard FinTechBankX envelope. Consumers must be idempotent on eventId
+        and ignore unknown fields.
+      required:
+      - eventId
+      - eventType
+      - occurredAt
+      - aggregateId
+      - aggregateVersion
+      - correlationId
+      - causationId
+      - producer
+      - data
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          pattern: '^[A-Z][A-Za-z]*\\.[A-Z][A-Za-z]*\\.[A-Z][A-Za-z]*\\.v[0-9]+$'
+        occurredAt:
+          type: string
+          format: date-time
+        aggregateId:
+          type: string
+          minLength: 1
+          description: Bulk file id (FILE-BULK-<uuid>); also the Kafka record key.
+        aggregateVersion:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Version of the file after the change (0 at acceptance; one more per processed batch).
+        correlationId:
+          type: string
+          minLength: 1
+          description: >-
+            x-fapi-interaction-id of the upload request for file-accepted; the
+            file id for events raised by the background processor.
+        causationId:
+          type:
+          - string
+          - 'null'
+          description: Always null in v1.
+        producer:
+          type: string
+          const: svc-pay-bulk-orchestration
+        data:
+          type: object
+    EventHeaders:
+      type: object
+      required:
+      - eventType
+      - eventId
+      - correlationId
+      properties:
+        eventType:
+          type: string
+        eventId:
+          type: string
+          format: uuid
+        correlationId:
+          type: string
+        x-fapi-interaction-id:
+          type: string
+          description: Same value as correlationId.
+        traceparent:
+          type: string
+          description: W3C trace context of the request that raised the event, when one was active.
+    DecimalAmount:
+      type: string
+      pattern: '^[0-9]+\\.[0-9]{2,}$'
+      description: Non-negative decimal string with at least two decimals, for example 1500.00.
+    BulkFileAcceptedData:
+      type: object
+      description: Payload of Payments.BulkFile.Accepted.v1.
+      required:
+      - fileId
+      - consentId
+      - tppId
+      - integrityMode
+      - totalCount
+      - acceptedCount
+      - rejectedCount
+      - totalAmount
+      properties:
+        fileId:
+          type: string
+          minLength: 1
+        consentId:
+          type: string
+          minLength: 1
+          description: Payment consent (owned by svc-of-consent-auth) the file was uploaded under.
+        tppId:
+          type: string
+          minLength: 1
+          description: Third-party provider that uploaded the file.
+        integrityMode:
+          type: string
+          enum:
+          - PARTIAL_REJECTION
+          - FULL_REJECTION
+        totalCount:
+          type: integer
+          minimum: 1
+        acceptedCount:
+          type: integer
+          minimum: 0
+          description: Items that passed validation at upload.
+        rejectedCount:
+          type: integer
+          minimum: 0
+        totalAmount:
+          $ref: '#/components/schemas/DecimalAmount'
+    BulkFileCompletedData:
+      type: object
+      description: Payload of Payments.BulkFile.Completed.v1.
+      required:
+      - fileId
+      - outcome
+      - totalCount
+      - acceptedCount
+      - rejectedCount
+      - acceptedAmount
+      - completedAt
+      properties:
+        fileId:
+          type: string
+          minLength: 1
+        outcome:
+          type: string
+          enum:
+          - COMPLETED
+          - PARTIALLY_ACCEPTED
+        totalCount:
+          type: integer
+          minimum: 1
+        acceptedCount:
+          type: integer
+          minimum: 1
+        rejectedCount:
+          type: integer
+          minimum: 0
+        acceptedAmount:
+          $ref: '#/components/schemas/DecimalAmount'
+        completedAt:
+          type: string
+          format: date-time
+    BulkFileRejectedData:
+      type: object
+      description: Payload of Payments.BulkFile.Rejected.v1.
+      required:
+      - fileId
+      - totalCount
+      - rejectedCount
+      - rejectedAt
+      properties:
+        fileId:
+          type: string
+          minLength: 1
+        totalCount:
+          type: integer
+          minimum: 1
+        rejectedCount:
+          type: integer
+          minimum: 1
+        rejectedAt:
+          type: string
+          format: date-time
