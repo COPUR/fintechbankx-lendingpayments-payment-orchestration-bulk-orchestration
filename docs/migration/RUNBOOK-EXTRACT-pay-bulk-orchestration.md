@@ -9,6 +9,7 @@ Template: adr-runbooks `docs/transformation-outputs/migration-runbook-template.m
 - Owner Squad: Lending & Payments, bulk payments (service owner of `svc-pay-bulk-orchestration`)
 - Change Window: to be agreed with the owner squad and the gateway owners; uploads are frozen during cutover
 - Risk Tier: `High` (TPP-facing payment initiation API, new consent rules, first deployment of this service)
+- Matrix row: **LP-09**; regression mapping `docs/migration/REGRESSION_MAPPING.md`
 
 Status: **Proposed**. Nothing here has been executed against a shared environment.
 
@@ -217,11 +218,13 @@ Rejected event with reason `CONSENT_NOT_USABLE`); a consent-service outage only 
 - [ ] Security scan pass; DPoP enforced; Bearer tokens get 401
 - [ ] SLO/SLA thresholds pass for one business day after step 8
 - [ ] Known gap (consent binding to the authorised file) closed or accepted in writing
+- [ ] LP-09 parity run: 0 regressions, every difference one listed in `docs/migration/REGRESSION_MAPPING.md` (run id: ...)
 - [ ] Audit evidence stored
 
 ## 7. Evidence Links
 
 - PR links: pending (nothing is merged)
 - Pipeline runs: pending
+- Parity run: LP-09 `<run>-<sha7>` (to add)
 - Dashboard snapshots: pending
 - Incident/rollback references: none
