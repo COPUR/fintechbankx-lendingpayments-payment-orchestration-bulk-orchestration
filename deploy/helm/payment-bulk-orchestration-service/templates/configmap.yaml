@@ -1,0 +1,16 @@
+{{- $required := list "DB_URL" "KAFKA_BOOTSTRAP_SERVERS" "OIDC_ISSUER_URI" "OIDC_JWK_SET_URI" "OIDC_TOKEN_URI" "OIDC_AUDIENCE" "CONSENT_SERVICE_BASE_URL" -}}
+{{- range $key := $required }}
+{{- if not (index $.Values.config $key) }}
+{{- fail (printf "config.%s is required" $key) }}
+{{- end }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "bulk.name" . }}
+  labels:
+    {{- include "bulk.labels" . | nindent 4 }}
+data:
+  {{- range $key, $value := .Values.config }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}

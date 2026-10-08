@@ -1,0 +1,132 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bulk.name" . }}
+  labels:
+    {{- include "bulk.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "bulk.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "bulk.selectorLabels" . | nindent 8 }}
+        app: {{ .Values.serviceAccount.name }}
+        version: {{ required "image.tag is required" .Values.image.tag | quote }}
+        {{- toYaml .Values.podLabels | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        sidecar.istio.io/inject: "true"
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.service.managementPort | quote }}
+        prometheus.io/path: /actuator/prometheus
+        {{- if .Values.kafkaStrimzi.enabled }}
+        # Kafka brings its own mutual TLS; the sidecar must not wrap it.
+        traffic.sidecar.istio.io/excludeOutboundPorts: "9093"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              {{- include "bulk.selectorLabels" . | nindent 14 }}
+        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "bulk.selectorLabels" . | nindent 14 }}
+      containers:
+        - name: payment-bulk-orchestration-service
+          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+            - name: http-management
+              containerPort: {{ .Values.service.managementPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "bulk.name" . }}
+            {{- if .Values.externalSecret.enabled }}
+            - secretRef:
+                name: {{ include "bulk.secretName" . }}
+            {{- end }}
+          {{- if .Values.kafkaStrimzi.enabled }}
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: kafka-strimzi
+            - name: KAFKA_SECURITY_PROTOCOL
+              value: SSL
+            - name: KAFKA_TLS_CERT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafkaStrimzi.tlsSecretName }}
+                  key: user.crt
+            - name: KAFKA_TLS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafkaStrimzi.tlsSecretName }}
+                  key: user.key
+            - name: KAFKA_TLS_CA
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.kafkaStrimzi.tlsSecretName }}
+                  key: ca.crt
+          {{- end }}
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http-management
+            periodSeconds: 5
+            failureThreshold: 36
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http-management
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http-management
+            periodSeconds: 5
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sh", "-c", "sleep 10"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

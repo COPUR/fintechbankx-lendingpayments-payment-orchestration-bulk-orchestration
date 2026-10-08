@@ -1,0 +1,37 @@
+{{- if .Values.networkPolicy.enabled }}
+# L3/L4 guard under the mesh: the API only from the ingress gateway and listed
+# namespaces, the management port only from the observability namespace.
+# Mesh-level ALLOW rules (AuthorizationPolicy) are owned by the mesh repository.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "bulk.name" . }}
+  labels:
+    {{- include "bulk.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "bulk.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: {{ .Values.service.port }}
+          protocol: TCP
+      from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}
+        {{- range .Values.networkPolicy.allowedNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+        {{- end }}
+    - ports:
+        - port: {{ .Values.service.managementPort }}
+          protocol: TCP
+      from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
+{{- end }}

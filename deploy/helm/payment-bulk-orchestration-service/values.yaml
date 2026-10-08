@@ -1,0 +1,95 @@
+# Defaults are production-shaped (multi-replica, spread across zones).
+# Override per environment with values-<env>.yaml. Install into namespace
+# "payments" (platform contract); the service account name is the Helm name.
+
+image:
+  repository: ""   # e.g. <account>.dkr.ecr.<region>.amazonaws.com/fintechbankx/payment-bulk-orchestration-service
+  tag: ""          # immutable tag (git SHA); never "latest"
+  pullPolicy: IfNotPresent
+
+replicaCount: 3
+
+serviceAccount:
+  name: payment-bulk-orchestration-service
+  # IAM role from deploy/terraform output workload_role_arn (IRSA).
+  roleArn: ""
+
+podLabels:
+  app.kubernetes.io/part-of: fintechbankx-payments
+  fintechbankx.io/service-id: svc-pay-bulk-orchestration
+  # Naming-standard app label (app-<ctx>-<cap>); plain "app" is reserved for the SA name.
+  fintechbankx.io/app: app-pay-bulk-orchestration
+  sidecar.istio.io/inject: "true"
+
+service:
+  port: 8080
+  managementPort: 8081
+
+# Memory request = limit: the JVM sizes its heap from the limit (MaxRAMPercentage=75).
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    memory: 1Gi
+
+# CPU only: JVM memory does not shrink with load, so it is no scaling signal.
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 65
+
+podDisruptionBudget:
+  minAvailable: 2
+
+# Non-secret runtime settings, rendered into a ConfigMap. Values marked
+# "required" fail the render when empty.
+config:
+  DB_URL: ""                      # required: jdbc:postgresql://<aurora-writer-endpoint>:5432/db_pay_bulk_orchestration_<env>?sslmode=require
+  DB_USERNAME: payment_bulk_app
+  DB_POOL_MAX: "10"
+  KAFKA_BOOTSTRAP_SERVERS: ""     # required: MSK bootstrap_brokers_sasl_iam (port 9098)
+  KAFKA_SECURITY_PROTOCOL: SASL_SSL
+  SPRING_PROFILES_ACTIVE: kafka-msk   # kafka-strimzi for the in-cluster Kafka (set kafkaStrimzi.enabled)
+  OIDC_ISSUER_URI: ""             # required: https://<identity-host>/realms/fintechbankx
+  OIDC_JWK_SET_URI: ""            # required: <issuer>/protocol/openid-connect/certs
+  OIDC_TOKEN_URI: ""              # required: client-credentials token endpoint for service-to-service calls
+  OIDC_AUDIENCE: svc-pay-bulk-orchestration
+  SERVICE_CLIENT_ID: svc-pay-bulk-orchestration
+  CONSENT_ADAPTER: http
+  CONSENT_SERVICE_BASE_URL: http://consent-auth-service.open-finance.svc.cluster.local:8080
+  BULK_PROCESSING_ENABLED: "true"
+  BULK_PROCESSING_BATCH_SIZE: "500"
+  # Off until the evt.pay.bulk.*.v1 topics are in the platform catalog and created (runbook step 4).
+  OUTBOX_RELAY_ENABLED: "false"
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector.observability.svc.cluster.local:4318/v1/traces
+
+# Credentials, synced from AWS Secrets Manager by External Secrets Operator.
+externalSecret:
+  enabled: true
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: aws-secrets-manager
+  # Secrets Manager secret from deploy/terraform output app_db_secret_name.
+  remoteSecretName: ""
+  # This service's Keycloak client secret: <env>/payment-bulk-orchestration-service/oidc-client, property client_secret.
+  serviceClientSecretName: ""
+  refreshInterval: 1h
+
+# In-cluster Strimzi Kafka instead of MSK: mutual TLS with the KafkaUser
+# certificate from Secret kafka-client-tls (keys user.crt, user.key, ca.crt).
+kafkaStrimzi:
+  enabled: false
+  tlsSecretName: kafka-client-tls
+
+networkPolicy:
+  enabled: true
+  # Namespaces whose pods may call the API on 8080 (besides the ingress gateway).
+  # TPPs reach the API through the ingress gateway only.
+  allowedNamespaces: []
+  ingressNamespace: istio-ingress
+  monitoringNamespace: observability
+
+topologySpread:
+  maxSkew: 1
