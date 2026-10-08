@@ -383,6 +383,38 @@ class BulkOrchestrationServiceIT {
                 .andExpect(status().isForbidden());
     }
 
+    /** Error dispatches (sendError) must keep their status instead of being turned into 401/403. */
+    @Test
+    void malformedRequestsKeepTheirClientErrorStatus() throws Exception {
+        mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-BAD-JSON")
+                        .contentType("application/json")
+                        .content("{\"Data\": {\"ConsentId\": "))
+                .andExpect(status().isBadRequest());
+
+        mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-BAD-TYPE")
+                        .contentType("text/plain")
+                        .content("hello"))
+                .andExpect(status().isUnsupportedMediaType());
+
+        mvc.perform(asTpp(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                        .delete("/open-finance/v1/file-payments/FILE-X")))
+                .andExpect(status().isMethodNotAllowed());
+    }
+
+    /** A container error dispatch to /error (sendError from any layer) is not re-secured into 401/403. */
+    @Test
+    void errorDispatchKeepsTheOriginalStatus() throws Exception {
+        mvc.perform(get("/error").with(request -> {
+                    request.setDispatcherType(jakarta.servlet.DispatcherType.ERROR);
+                    request.setAttribute(jakarta.servlet.RequestDispatcher.ERROR_STATUS_CODE, 400);
+                    request.setAttribute(jakarta.servlet.RequestDispatcher.ERROR_REQUEST_URI, "/open-finance/v1/file-payments");
+                    return request;
+                }))
+                .andExpect(status().isBadRequest());
+    }
+
     @Test
     void dpopProofIsRequiredAndVerifiedOnTheTppApi() throws Exception {
         String fileId = upload("IDEMP-DPOP", csv("INS-1," + IBAN + ",10.00"), "PARTIAL_REJECTION");

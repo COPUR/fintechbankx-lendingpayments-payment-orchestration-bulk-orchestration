@@ -6,6 +6,7 @@ import com.enterprise.openfinance.bulkpayments.infrastructure.security.DpopProof
 import com.enterprise.openfinance.bulkpayments.infrastructure.security.DpopRequestVerifier;
 import com.enterprise.openfinance.bulkpayments.infrastructure.security.JdbcDpopJtiReplayStore;
 import com.enterprise.openfinance.bulkpayments.infrastructure.security.JwtValidation;
+import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -43,6 +44,8 @@ public class SecurityConfiguration {
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // A container error dispatch keeps the original status (400, 415, ...) instead of 401/403.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         .requestMatchers("/actuator/health/**", "/actuator/info", "/actuator/prometheus").permitAll()
                         .requestMatchers(TPP_API + "/**", TPP_API).authenticated()
                         .anyRequest().denyAll())

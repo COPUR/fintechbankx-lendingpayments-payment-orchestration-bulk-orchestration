@@ -12,6 +12,8 @@ import org.springframework.web.bind.MissingRequestHeaderException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.web.ErrorResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -82,6 +84,14 @@ public class BulkPaymentsExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<BulkErrorResponse> handleUnexpected(Exception exception,
                                                               HttpServletRequest request) {
+        if (exception instanceof ErrorResponse standard) {
+            // Spring MVC's own client errors (405, 406, 415, 404, ...) keep their status and headers.
+            HttpStatusCode status = standard.getStatusCode();
+            HttpStatus known = HttpStatus.resolve(status.value());
+            return ResponseEntity.status(status).headers(standard.getHeaders())
+                    .body(BulkErrorResponse.of(known != null ? known.name() : "HTTP_" + status.value(),
+                            known != null ? known.getReasonPhrase() : "Request failed", interactionId(request)));
+        }
         log.error("Unhandled error on {} {}", request.getMethod(), request.getRequestURI(), exception);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(BulkErrorResponse.of("INTERNAL_ERROR", "Unexpected error occurred", interactionId(request)));

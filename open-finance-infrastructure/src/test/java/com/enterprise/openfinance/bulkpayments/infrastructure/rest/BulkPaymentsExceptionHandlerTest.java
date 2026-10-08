@@ -84,4 +84,20 @@ class BulkPaymentsExceptionHandlerTest {
         request.addHeader("X-FAPI-Interaction-ID", "ix-1");
         return request;
     }
+
+    @Test
+    void springWebClientErrorsKeepTheirStatusAndHeaders() {
+        BulkPaymentsExceptionHandler handler = new BulkPaymentsExceptionHandler();
+
+        ResponseEntity<BulkErrorResponse> unsupported = handler.handleUnexpected(
+                new org.springframework.web.HttpMediaTypeNotSupportedException("text/plain"), request());
+        ResponseEntity<BulkErrorResponse> method = handler.handleUnexpected(
+                new org.springframework.web.HttpRequestMethodNotSupportedException("DELETE", java.util.List.of("GET")),
+                request());
+
+        assertThat(unsupported.getStatusCode()).isEqualTo(HttpStatus.UNSUPPORTED_MEDIA_TYPE);
+        assertThat(unsupported.getBody().code()).isEqualTo("UNSUPPORTED_MEDIA_TYPE");
+        assertThat(method.getStatusCode()).isEqualTo(HttpStatus.METHOD_NOT_ALLOWED);
+        assertThat(method.getHeaders().getAllow()).containsExactly(org.springframework.http.HttpMethod.GET);
+    }
 }
