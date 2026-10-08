@@ -589,14 +589,15 @@ class BulkPaymentServiceTest {
                 return Optional.empty();
             }
             BulkIdempotencyRecord record = records.get(idempotencyKey + ':' + tppId);
-            return record == null || !record.isActive(now) ? Optional.empty() : Optional.of(record);
+            // As the database adapter: a key is never reusable, whatever its expiry says.
+            return Optional.ofNullable(record);
         }
 
         @Override
         public boolean reserve(BulkIdempotencyRecord record, Instant now) {
             String key = record.idempotencyKey() + ':' + record.tppId();
             BulkIdempotencyRecord existing = records.get(key);
-            if (existing != null && existing.isActive(now)) {
+            if (existing != null) {
                 return false;
             }
             records.put(key, record);

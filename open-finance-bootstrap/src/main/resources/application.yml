@@ -139,6 +139,7 @@ openfinance:
       connect-timeout: PT1S
       read-timeout: PT2S
     policy:
+      # Sets expires_at (earliest archiving). Keys are never reusable, whatever this says.
       idempotency-ttl: PT24H
     cache:
       ttl: PT30S

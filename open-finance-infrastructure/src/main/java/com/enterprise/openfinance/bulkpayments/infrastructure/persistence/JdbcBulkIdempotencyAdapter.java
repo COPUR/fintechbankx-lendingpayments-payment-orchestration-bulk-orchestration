@@ -13,9 +13,13 @@ import java.util.Optional;
 
 /**
  * Upload idempotency in sc_pay_bulk_orchestration.bulk_idempotency. The key
- * is reserved with one atomic INSERT ... ON CONFLICT: PostgreSQL makes a
- * concurrent insert of the same key wait for the first transaction, so only
- * one upload per key and TPP can create a file. An expired key is taken over.
+ * is reserved with one atomic INSERT ... ON CONFLICT DO NOTHING: PostgreSQL
+ * makes a concurrent insert of the same key wait for the first transaction,
+ * so only one upload per key and TPP can create a file. Keys are never
+ * reusable: a key answers with its original file for as long as the record
+ * exists, whatever expires_at says (bulk_file also keeps (tpp_id,
+ * idempotency_key) unique for good). expires_at only marks when a record may
+ * be archived; nothing purges it today.
  */
 @Repository
 public class JdbcBulkIdempotencyAdapter implements BulkIdempotencyPort {
@@ -31,10 +35,9 @@ public class JdbcBulkIdempotencyAdapter implements BulkIdempotencyPort {
         return jdbc.query("""
                         select idempotency_key, tpp_id, request_hash, file_id, file_status, expires_at
                         from bulk_idempotency
-                        where tpp_id = :tppId and idempotency_key = :key and expires_at > :now
+                        where tpp_id = :tppId and idempotency_key = :key
                         """,
-                new MapSqlParameterSource("tppId", tppId).addValue("key", idempotencyKey)
-                        .addValue("now", Timestamp.from(now)),
+                new MapSqlParameterSource("tppId", tppId).addValue("key", idempotencyKey),
                 (rs, rowNum) -> new BulkIdempotencyRecord(
                         rs.getString("idempotency_key"),
                         rs.getString("tpp_id"),
@@ -50,13 +53,7 @@ public class JdbcBulkIdempotencyAdapter implements BulkIdempotencyPort {
         int rows = jdbc.update("""
                 insert into bulk_idempotency (tpp_id, idempotency_key, request_hash, file_id, file_status, created_at, expires_at)
                 values (:tppId, :key, :requestHash, :fileId, :status, :now, :expiresAt)
-                on conflict (tpp_id, idempotency_key) do update
-                    set request_hash = excluded.request_hash,
-                        file_id = excluded.file_id,
-                        file_status = excluded.file_status,
-                        created_at = excluded.created_at,
-                        expires_at = excluded.expires_at
-                    where bulk_idempotency.expires_at <= :now
+                on conflict (tpp_id, idempotency_key) do nothing
                 """, new MapSqlParameterSource("tppId", record.tppId())
                 .addValue("key", record.idempotencyKey())
                 .addValue("requestHash", record.requestHash())

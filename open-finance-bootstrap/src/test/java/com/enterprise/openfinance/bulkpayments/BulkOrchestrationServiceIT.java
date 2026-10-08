@@ -343,6 +343,34 @@ class BulkOrchestrationServiceIT {
     }
 
     @Test
+    void anIdempotencyKeyIsNeverReusableEvenAfterItsRecordExpired() throws Exception {
+        String content = csv("INS-1," + IBAN + ",10.00");
+        String body = body("CONS-REUSE", "payroll.csv", content, sha256(content), "PARTIAL_REJECTION");
+        String fileId = json.readTree(mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-REUSE").contentType("application/json").content(body))
+                .andExpect(status().isAccepted())
+                .andReturn().getResponse().getContentAsString()).at("/Data/FilePaymentId").asText();
+        jdbc.update("update " + SCHEMA + ".bulk_idempotency set created_at = now() - interval '3 days',"
+                + " expires_at = now() - interval '2 days' where idempotency_key = 'IDEMP-REUSE'");
+
+        // Same request after expiry: still the original file, never a second one (and never a 500).
+        mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-REUSE").contentType("application/json").content(body))
+                .andExpect(status().isAccepted())
+                .andExpect(header().string("X-OF-Idempotency", "HIT"))
+                .andExpect(jsonPath("$.Data.FilePaymentId").value(fileId));
+
+        // Another file under the old key is a conflict.
+        String other = csv("INS-1," + IBAN + ",20.00");
+        mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-REUSE").contentType("application/json")
+                        .content(body("CONS-REUSE-2", "other.csv", other, sha256(other), "PARTIAL_REJECTION")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONFLICT"));
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_file", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
     void partialAndFullRejectionModes() throws Exception {
         String mixed = csv("INS-1," + IBAN + ",10.00", "INS-2,AE000,10.00");
 

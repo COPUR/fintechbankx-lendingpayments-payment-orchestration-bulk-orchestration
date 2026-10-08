@@ -5,6 +5,9 @@ import java.time.Duration;
 /**
  * Policy values of the bulk-payments context.
  *
+ * @param idempotencyTtl      earliest time an idempotency record may be archived (its
+ *                            expires_at). It never makes a key reusable: a key always
+ *                            answers with its original file.
  * @param processingBatchSize upper bound of items processed per transaction,
  *                            so a large file never holds one long transaction
  */

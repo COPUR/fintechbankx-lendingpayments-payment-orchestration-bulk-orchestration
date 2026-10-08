@@ -37,10 +37,6 @@ public record BulkIdempotencyRecord(
         fileId = fileId.trim();
     }
 
-    public boolean isActive(Instant now) {
-        return expiresAt.isAfter(now);
-    }
-
     private static boolean isBlank(String value) {
         return value == null || value.isBlank();
     }

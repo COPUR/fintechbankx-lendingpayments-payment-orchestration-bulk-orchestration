@@ -20,8 +20,6 @@ class BulkIdempotencyRecordTest {
                 Instant.parse("2026-02-10T00:00:00Z")
         );
 
-        assertThat(record.isActive(Instant.parse("2026-02-09T00:00:00Z"))).isTrue();
-        assertThat(record.isActive(Instant.parse("2026-02-10T00:00:00Z"))).isFalse();
     }
 
     @Test
