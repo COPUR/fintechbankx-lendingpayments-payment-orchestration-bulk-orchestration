@@ -112,8 +112,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
 
     private BulkUploadResult store(SubmitBulkFileCommand command, ParsedBulkFile parsed, BulkFile file, Instant now) {
         boolean reserved = idempotencyPort.reserve(new BulkIdempotencyRecord(
-                command.idempotencyKey(), command.tppId(), command.requestHash(), file.fileId(), file.status(),
-                now.plus(settings.idempotencyTtl())), now);
+                command.idempotencyKey(), command.tppId(), command.requestHash(), file.fileId(), file.status()), now);
         if (!reserved) {
             // A concurrent upload with the same key committed first: answer as its replay.
             return lookupIdempotentReplay(command, now)

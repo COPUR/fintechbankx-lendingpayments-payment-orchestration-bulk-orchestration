@@ -27,6 +27,11 @@ paid, `evt.pay.bulk.completed.v1` is not emitted), data migration (none, see sec
 Data: no backfill. The monolith kept files, items, reports and idempotency keys in memory only, with no table
 and no migration, so there is nothing to copy.
 
+Data retention: `bulk_file`, `bulk_item`, `bulk_consent_binding` and `bulk_idempotency` are kept with no automatic
+purge. Idempotency keys are permanent and never reusable (no expiry since `V13`); an idempotency row is deleted only
+with its file (foreign key, `ON DELETE CASCADE`), so any archiving decision is taken per file by the owner squad and
+compliance. Published outbox rows are purged after 7 days and DPoP replay entries when they expire.
+
 ## 2. Preconditions
 
 General (template):
@@ -92,7 +97,7 @@ Cross-repo prerequisites, in this order (each must be done before the next start
    ```
 
    Then put `{"username","password"}` of each role into its secret (`aws secretsmanager put-secret-value`). The
-   first install's pre-install Job runs V1 to V11 as the owner; V11 grants the runtime role. Rollback: uninstall
+   first install's pre-install Job runs every migration (V1 to V13) as the owner; V11 grants the runtime role. Rollback: uninstall
    the chart, then `DROP SCHEMA sc_pay_bulk_orchestration CASCADE` and recreate it as above.
 5. **Smoke upload** in the target environment (section 3, step 6).
 6. **Route switch** (section 3, step 8).
@@ -111,7 +116,7 @@ not go ahead.
 | 1 | Freeze scope; confirm the known gap is closed or formally accepted | Bulk squad, compliance | Signed scope checklist | Gap neither closed nor accepted |
 | 2 | Contracts merged (OpenAPI, AsyncAPI catalog PR #13) | Bulk squad, contracts | Contract tests green (`OpenApiContractTest`, `AsyncApiContractTest`, `ConsentServiceViewContractTest`) | Contract mismatch |
 | 3 | Cross-repo prerequisites 1 to 4 (section 2), in order | Consent owner, identity, mesh, platform | Each one confirmed in its own repo / ticket | Any prerequisite missing |
-| 4 | Deploy with `helm upgrade --install payment-bulk-orchestration-service deploy/helm/payment-bulk-orchestration-service -n payments -f values-<env>.yaml`; Flyway runs as the schema owner in the pre-install hook Job before the pods start | Bulk squad | Job succeeded; `flyway_schema_history` at V11; pods ready as `payment_bulk_app` | Pods not ready, migration Job failed (it stays for inspection; fix and re-run the upgrade) |
+| 4 | Deploy with `helm upgrade --install payment-bulk-orchestration-service deploy/helm/payment-bulk-orchestration-service -n payments -f values-<env>.yaml`; Flyway runs as the schema owner in the pre-install hook Job before the pods start | Bulk squad | Job succeeded; `flyway_schema_history` at the latest version (V13); pods ready as `payment_bulk_app` | Pods not ready, migration Job failed (it stays for inspection; fix and re-run the upgrade) |
 | 5 | Relay stays off (`OUTBOX_RELAY_ENABLED=false`) until the platform has created `evt.pay.bulk.accepted.v1` and `evt.pay.bulk.rejected.v1` (the service never creates topics); then enable it | Bulk squad, platform | `outbox_pending_events` drains; `outbox_send_failures_total` flat | platform alert `OutboxEventsParked` fires |
 | 6 | Smoke upload through the gateway with a test TPP (DPoP token, `INITIATEBULKPAYMENTS` consent, `Currency`) | Bulk squad | 202, then `Validated`, report figures equal the file; Accepted event on Kafka | Any 5xx, 401 on a valid proof, 503 from the consent check |
 | 7 | Freeze uploads on the monolith and drain it: wait until every monolith file is terminal or past its poll window | Bulk squad | No monolith file in a non-terminal state still being polled | Drain does not finish in the window |

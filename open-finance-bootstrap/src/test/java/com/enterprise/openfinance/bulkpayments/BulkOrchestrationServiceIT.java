@@ -168,6 +168,17 @@ class BulkOrchestrationServiceIT {
         owner.update("delete from " + SCHEMA + ".bulk_file");
     }
 
+    /** Idempotency keys are permanent: no expiry column, and the table says so. */
+    @Test
+    void theIdempotencyTableKeepsKeysForGood() {
+        assertThat(jdbc.queryForList("select column_name from information_schema.columns where table_schema = ?"
+                + " and table_name = 'bulk_idempotency' order by ordinal_position", String.class, SCHEMA))
+                .containsExactly("tpp_id", "idempotency_key", "request_hash", "file_id", "file_status", "created_at");
+        assertThat(PostgresTestDatabase.owner().queryForObject(
+                "select obj_description(?::regclass, 'pg_class')", String.class, SCHEMA + ".bulk_idempotency"))
+                .contains("never reusable").doesNotContain("may be reused");
+    }
+
     @Test
     void flywayCreatesOnlyTheTablesThisServiceOwns() {
         List<String> tables = jdbc.queryForList("""
@@ -436,17 +447,17 @@ class BulkOrchestrationServiceIT {
     }
 
     @Test
-    void anIdempotencyKeyIsNeverReusableEvenAfterItsRecordExpired() throws Exception {
+    void anIdempotencyKeyIsNeverReusableEvenDaysLater() throws Exception {
         String content = csv("INS-1," + IBAN + ",10.00");
         String body = body("CONS-REUSE", "payroll.csv", content, sha256(content), "PARTIAL_REJECTION");
         String fileId = json.readTree(mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
                         .header("x-idempotency-key", "IDEMP-REUSE").contentType("application/json").content(body))
                 .andExpect(status().isAccepted())
                 .andReturn().getResponse().getContentAsString()).at("/Data/FilePaymentId").asText();
-        PostgresTestDatabase.owner().update("update " + SCHEMA + ".bulk_idempotency set created_at = now() - interval '3 days',"
-                + " expires_at = now() - interval '2 days' where idempotency_key = 'IDEMP-REUSE'");
+        PostgresTestDatabase.owner().update("update " + SCHEMA + ".bulk_idempotency set created_at = now() - interval '3 days'"
+                + " where idempotency_key = 'IDEMP-REUSE'");
 
-        // Same request after expiry: still the original file, never a second one (and never a 500).
+        // Same request days later: still the original file, never a second one (and never a 500).
         mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
                         .header("x-idempotency-key", "IDEMP-REUSE").contentType("application/json").content(body))
                 .andExpect(status().isAccepted())

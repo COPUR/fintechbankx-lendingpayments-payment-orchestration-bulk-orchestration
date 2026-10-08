@@ -15,11 +15,10 @@ import java.util.Optional;
  * Upload idempotency in sc_pay_bulk_orchestration.bulk_idempotency. The key
  * is reserved with one atomic INSERT ... ON CONFLICT DO NOTHING: PostgreSQL
  * makes a concurrent insert of the same key wait for the first transaction,
- * so only one upload per key and TPP can create a file. Keys are never
- * reusable: a key answers with its original file for as long as the record
- * exists, whatever expires_at says (bulk_file also keeps (tpp_id,
- * idempotency_key) unique for good). expires_at only marks when a record may
- * be archived; nothing purges it today.
+ * so only one upload per key and TPP can create a file. Keys are permanent
+ * and never reusable: a key answers with its original file for good (V13
+ * dropped expires_at; bulk_file also keeps (tpp_id, idempotency_key) unique).
+ * Rows are deleted only with their file (foreign key, ON DELETE CASCADE).
  */
 @Repository
 public class JdbcBulkIdempotencyAdapter implements BulkIdempotencyPort {
@@ -33,7 +32,7 @@ public class JdbcBulkIdempotencyAdapter implements BulkIdempotencyPort {
     @Override
     public Optional<BulkIdempotencyRecord> find(String idempotencyKey, String tppId, Instant now) {
         return jdbc.query("""
-                        select idempotency_key, tpp_id, request_hash, file_id, file_status, expires_at
+                        select idempotency_key, tpp_id, request_hash, file_id, file_status
                         from bulk_idempotency
                         where tpp_id = :tppId and idempotency_key = :key
                         """,
@@ -43,24 +42,22 @@ public class JdbcBulkIdempotencyAdapter implements BulkIdempotencyPort {
                         rs.getString("tpp_id"),
                         rs.getString("request_hash"),
                         rs.getString("file_id"),
-                        BulkFileStatus.valueOf(rs.getString("file_status")),
-                        rs.getTimestamp("expires_at").toInstant()))
+                        BulkFileStatus.valueOf(rs.getString("file_status"))))
                 .stream().findFirst();
     }
 
     @Override
     public boolean reserve(BulkIdempotencyRecord record, Instant now) {
         int rows = jdbc.update("""
-                insert into bulk_idempotency (tpp_id, idempotency_key, request_hash, file_id, file_status, created_at, expires_at)
-                values (:tppId, :key, :requestHash, :fileId, :status, :now, :expiresAt)
+                insert into bulk_idempotency (tpp_id, idempotency_key, request_hash, file_id, file_status, created_at)
+                values (:tppId, :key, :requestHash, :fileId, :status, :now)
                 on conflict (tpp_id, idempotency_key) do nothing
                 """, new MapSqlParameterSource("tppId", record.tppId())
                 .addValue("key", record.idempotencyKey())
                 .addValue("requestHash", record.requestHash())
                 .addValue("fileId", record.fileId())
                 .addValue("status", record.status().name())
-                .addValue("now", Timestamp.from(now))
-                .addValue("expiresAt", Timestamp.from(record.expiresAt())));
+                .addValue("now", Timestamp.from(now)));
         return rows == 1;
     }
 }

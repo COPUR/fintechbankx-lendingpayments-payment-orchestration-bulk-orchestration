@@ -423,7 +423,7 @@ class BulkPaymentServiceTest {
 
     @Test
     void shouldRejectTooLargePayloadAndUnknownResources() {
-        BulkPaymentService service = service(new BulkSettings(Duration.ofHours(24), Duration.ofSeconds(30), 10L, 2));
+        BulkPaymentService service = service(new BulkSettings(Duration.ofSeconds(30), 10L, 2));
 
         String content = validCsv("INS-1," + IBAN + ",10.00");
         assertThatThrownBy(() -> service.submitFile(command("IDEMP-500", content, BulkIntegrityMode.PARTIAL_REJECTION)))
@@ -464,7 +464,7 @@ class BulkPaymentServiceTest {
         String content = validCsv("INS-1," + IBAN + ",10.00");
         String requestHash = command("IDEMP-700", content, BulkIntegrityMode.PARTIAL_REJECTION).requestHash();
         idempotencyPort.records.put("IDEMP-700:TPP-001", new BulkIdempotencyRecord("IDEMP-700", "TPP-001",
-                requestHash, "FILE-404", BulkFileStatus.PROCESSING, Instant.parse("2026-02-10T00:00:00Z")));
+                requestHash, "FILE-404", BulkFileStatus.PROCESSING));
 
         assertThatThrownBy(() -> service.submitFile(command("IDEMP-700", content, BulkIntegrityMode.PARTIAL_REJECTION)))
                 .isInstanceOf(ResourceNotFoundException.class)
@@ -521,7 +521,7 @@ class BulkPaymentServiceTest {
     }
 
     private static BulkSettings settings(int batchSize) {
-        return new BulkSettings(Duration.ofHours(24), Duration.ofSeconds(30), 10_000_000L, batchSize);
+        return new BulkSettings(Duration.ofSeconds(30), 10_000_000L, batchSize);
     }
 
     private BulkPaymentService service(BulkSettings settings) {

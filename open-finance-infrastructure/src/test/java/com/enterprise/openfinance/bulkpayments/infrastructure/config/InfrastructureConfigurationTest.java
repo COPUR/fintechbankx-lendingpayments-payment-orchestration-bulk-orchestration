@@ -26,16 +26,13 @@ class InfrastructureConfigurationTest {
         processing.setMaxBatchesPerRun(3);
         processing.setInterval(Duration.ofMillis(500));
         processing.setEnabled(false);
-        BulkPaymentsPolicyProperties policy = new BulkPaymentsPolicyProperties();
-        policy.setIdempotencyTtl(Duration.ofHours(48));
         BulkPaymentsCacheProperties cache = new BulkPaymentsCacheProperties();
         cache.setTtl(Duration.ofSeconds(10));
 
-        BulkSettings settings = new BulkPaymentsConfiguration().bulkSettings(policy, cache, processing);
+        BulkSettings settings = new BulkPaymentsConfiguration().bulkSettings(cache, processing);
 
         assertThat(settings.processingBatchSize()).isEqualTo(250);
         assertThat(settings.maxFileSizeBytes()).isEqualTo(2_000L);
-        assertThat(settings.idempotencyTtl()).isEqualTo(Duration.ofHours(48));
         assertThat(settings.cacheTtl()).isEqualTo(Duration.ofSeconds(10));
         assertThat(processing.getMaxBatchesPerRun()).isEqualTo(3);
         assertThat(processing.getInterval()).isEqualTo(Duration.ofMillis(500));

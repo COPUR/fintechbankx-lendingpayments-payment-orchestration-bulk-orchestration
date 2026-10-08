@@ -14,7 +14,6 @@ import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 
 import java.math.BigDecimal;
 import java.sql.ResultSet;
-import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
 import java.util.stream.IntStream;
@@ -91,7 +90,7 @@ class JdbcAdaptersTest {
     void reserveReportsWhetherThisCallOwnsTheKey() {
         JdbcBulkIdempotencyAdapter adapter = new JdbcBulkIdempotencyAdapter(jdbc);
         BulkIdempotencyRecord record = new BulkIdempotencyRecord("IDEMP-1", "TPP-001", "hash", "FILE-1",
-                BulkFileStatus.PROCESSING, NOW.plusSeconds(60));
+                BulkFileStatus.PROCESSING);
         when(jdbc.update(anyString(), any(MapSqlParameterSource.class))).thenReturn(1).thenReturn(0);
 
         assertThat(adapter.reserve(record, NOW)).isTrue();
@@ -113,10 +112,8 @@ class JdbcAdaptersTest {
         when(rs.getString("request_hash")).thenReturn("hash");
         when(rs.getString("file_id")).thenReturn("FILE-1");
         when(rs.getString("file_status")).thenReturn("PROCESSING");
-        when(rs.getTimestamp("expires_at")).thenReturn(Timestamp.from(NOW));
         BulkIdempotencyRecord record = mapper.getValue().mapRow(rs, 0);
         assertThat(record.fileId()).isEqualTo("FILE-1");
-        assertThat(record.expiresAt()).isEqualTo(NOW);
         verify(jdbc, never()).update(anyString(), eq(new MapSqlParameterSource()));
     }
 }
