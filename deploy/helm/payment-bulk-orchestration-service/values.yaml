@@ -124,8 +124,21 @@ kafkaStrimzi:
   enabled: false
   tlsSecretName: kafka-client-tls
 
+# Owning squad, rendered as the common label fintechbankx.io/squad on every
+# object (platform review round 2).
+squad: payments
+
+# Metrics: the observability repo's PodMonitor fintechbankx-services is the
+# single scrape path (pod label fintechbankx.io/service-id plus the
+# prometheus.io annotations). This chart ships no ServiceMonitor (cicd-templates
+# 0f86859).
+
+# NetworkPolicy belongs to the mesh repo (platform review round 2, cicd-templates
+# 1dd1138), so the chart renders none by default. Opt-in only for a cluster the
+# mesh repo does not cover yet; it admits namespaces only, never a CIDR, and lets
+# observability reach 15020 (Istio merged metrics) and the management port.
 networkPolicy:
-  enabled: true
+  enabled: false
   # Namespaces whose pods may call the API on 8080 (besides the ingress gateway).
   # TPPs reach the API through the ingress gateway only.
   allowedNamespaces: []

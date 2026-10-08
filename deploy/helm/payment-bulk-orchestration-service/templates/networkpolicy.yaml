@@ -1,4 +1,5 @@
 {{- if .Values.networkPolicy.enabled }}
+# Opt-in only: NetworkPolicy belongs to the mesh repo.
 # L3/L4 guard under the mesh: the API only from the ingress gateway and listed
 # namespaces, the management port only from the observability namespace.
 # Mesh-level ALLOW rules (AuthorizationPolicy) are owned by the mesh repository.
@@ -28,6 +29,8 @@ spec:
               kubernetes.io/metadata.name: {{ . }}
         {{- end }}
     - ports:
+        - port: 15020
+          protocol: TCP
         - port: {{ .Values.service.managementPort }}
           protocol: TCP
       from:

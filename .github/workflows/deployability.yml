@@ -82,6 +82,20 @@ jobs:
           if helm template ci "$chart" $args --set externalSecret.remoteSecretName=dev-$sa/db-app > /dev/null 2>&1; then
             echo "chart rendered a remoteRef key outside <env>/$sa/" >&2; exit 1
           fi
+          # Platform review round 2: NetworkPolicy is the mesh repo's (off by default, never a CIDR),
+          # the observability PodMonitor is the single scrape path (no ServiceMonitor), squad label set,
+          # the sidecar drains for 55 s within the grace period.
+          if grep -qE '^kind: (NetworkPolicy|ServiceMonitor)$' <<<"$rendered"; then
+            echo "chart renders a NetworkPolicy or ServiceMonitor by default" >&2; exit 1
+          fi
+          if helm template ci "$chart" $args --set networkPolicy.enabled=true | grep -qE 'ipBlock|cidr'; then
+            echo "the opt-in NetworkPolicy admits a CIDR" >&2; exit 1
+          fi
+          grep -q 'fintechbankx.io/service-id: svc-pay-bulk-orchestration' <<<"$deployment"
+          grep -q 'prometheus.io/port: "8081"' <<<"$deployment"
+          grep -q "proxy.istio.io/config: '{\"terminationDrainDuration\": \"55s\"}'" <<<"$deployment"
+          test "$(grep -oE 'terminationGracePeriodSeconds: [0-9]+' <<<"$deployment" | awk '{print $2}')" -gt 55
+          test "$(grep -c 'fintechbankx.io/squad: payments' <<<"$rendered")" -ge 5
           # A missing required value must fail the render.
           if helm template ci "$chart" --set image.repository=x --set image.tag=y \
                --set externalSecret.remoteSecretName=dev/payment-bulk-orchestration-service/db-app \

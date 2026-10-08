@@ -59,6 +59,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: db-migration
         fintechbankx.io/service-id: {{ index .Values.podLabels "fintechbankx.io/service-id" }}
+        fintechbankx.io/squad: {{ .Values.squad }}
         sidecar.istio.io/inject: {{ .Values.migration.istioSidecar | quote }}
       annotations:
         # A classic Istio sidecar never exits, so the Job would never

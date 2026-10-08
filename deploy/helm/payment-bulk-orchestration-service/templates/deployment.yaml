@@ -23,10 +23,14 @@ spec:
         {{- include "bulk.selectorLabels" . | nindent 8 }}
         app: {{ .Values.serviceAccount.name }}
         version: {{ required "image.tag is required" .Values.image.tag | quote }}
+        fintechbankx.io/squad: {{ .Values.squad }}
         {{- toYaml .Values.podLabels | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
         sidecar.istio.io/inject: "true"
+        # Keep the sidecar draining for longer than the app's graceful shutdown
+        # (preStop 10 s + spring.lifecycle 25 s), within terminationGracePeriodSeconds.
+        proxy.istio.io/config: '{"terminationDrainDuration": "55s"}'
         prometheus.io/scrape: "true"
         prometheus.io/port: {{ .Values.service.managementPort | quote }}
         prometheus.io/path: /actuator/prometheus
@@ -36,7 +40,8 @@ spec:
         {{- end }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name }}
-      terminationGracePeriodSeconds: 45
+      # Above the sidecar drain (55 s) so neither is killed mid-drain.
+      terminationGracePeriodSeconds: 65
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

@@ -13,6 +13,7 @@ app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | qu
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 fintechbankx.io/app: app-pay-bulk-orchestration
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+fintechbankx.io/squad: {{ required "squad is required (payments)" .Values.squad }}
 {{- end -}}
 
 {{- define "bulk.secretName" -}}
