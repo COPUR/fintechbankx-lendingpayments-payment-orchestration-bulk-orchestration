@@ -55,7 +55,7 @@ class InfrastructureConfigurationTest {
         new OutboxConfiguration().outboxMetrics(registry, outbox, clock);
 
         assertThat(registry.get("outbox.pending.events").gauge().value()).isEqualTo(5.0);
-        assertThat(registry.get("outbox.parked.events").gauge().value()).isEqualTo(1.0);
+        assertThat(registry.get("outbox.parked.rows").gauge().value()).isEqualTo(1.0);
         assertThat(registry.get("outbox.oldest.pending.age.seconds").gauge().value()).isEqualTo(60.0);
 
         when(outbox.findOldestPendingOccurredAt()).thenReturn(Optional.empty());

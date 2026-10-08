@@ -151,7 +151,45 @@ class OutboxRelayTest {
             assertThat(poison.getLastError()).isEqualTo(name);
             assertThat(other.getStatus()).isEqualTo(OutboxEventJpaEntity.PUBLISHED);
             assertThat(failureCount(registry, name)).isEqualTo(1.0);
+            assertThat(poison.isParkCounted()).as("counted when the relay parked it").isTrue();
+            assertThat(registry.get(OutboxRelay.PARKED_COUNTER).tag("exception", name).counter().count())
+                    .as(name).isEqualTo(1.0);
         }
+    }
+
+    @Test
+    void anOperatorParkIsCountedOnceByTheRelay() {
+        OutboxEventJpaEntity operatorParked = row("FILE-1", "evt.pay.bulk.accepted.v1");
+        // What the runbook's operator SQL leaves behind: parked with a reason, not yet counted.
+        org.springframework.test.util.ReflectionTestUtils.setField(operatorParked, "status", OutboxEventJpaEntity.PARKED);
+        org.springframework.test.util.ReflectionTestUtils.setField(operatorParked, "parkedAt", NOW);
+        org.springframework.test.util.ReflectionTestUtils.setField(operatorParked, "parkedReason", "INC-1: topic ACL");
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
+        when(outbox.findUncountedParks()).thenReturn(List.of(operatorParked)).thenReturn(List.of());
+        when(outbox.findPendingBatch(100)).thenReturn(List.of());
+        OutboxRelay relay = relay(CLOCK, registry);
+
+        relay.relayOnce();
+        relay.relayOnce();
+
+        assertThat(operatorParked.isParkCounted()).isTrue();
+        assertThat(registry.get(OutboxRelay.PARKED_COUNTER).tag("exception", OutboxRelay.OPERATOR_PARK).counter().count())
+                .isEqualTo(1.0);
+        // Tagged by exception class only: no topic, event or file identifiers.
+        assertThat(registry.get(OutboxRelay.PARKED_COUNTER).counters()).allSatisfy(counter ->
+                assertThat(counter.getId().getTags()).extracting(Tag::getKey).containsExactly("exception"));
+    }
+
+    @Test
+    void parksAreNotCountedByAReplicaWithoutTheRelayLock() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(false);
+
+        relay(CLOCK, registry).relayOnce();
+
+        verify(outbox, never()).findUncountedParks();
+        assertThat(registry.find(OutboxRelay.PARKED_COUNTER).counters()).isEmpty();
     }
 
     @Test
@@ -243,6 +281,7 @@ class OutboxRelayTest {
     @Test
     void metricNamesAreThoseAgreedWithPlatformForAlerting() {
         assertThat(OutboxRelay.FAILURE_COUNTER).isEqualTo("outbox.send.failures");
+        assertThat(OutboxRelay.PARKED_COUNTER).isEqualTo("outbox.parked.events");
     }
 
     @Test

@@ -107,7 +107,7 @@ not go ahead.
 | 2 | Contracts merged (OpenAPI, AsyncAPI catalog PR #13) | Bulk squad, contracts | Contract tests green (`OpenApiContractTest`, `AsyncApiContractTest`, `ConsentServiceViewContractTest`) | Contract mismatch |
 | 3 | Cross-repo prerequisites 1 to 4 (section 2), in order | Consent owner, identity, mesh, platform | Each one confirmed in its own repo / ticket | Any prerequisite missing |
 | 4 | Deploy with `helm upgrade --install payment-bulk-orchestration-service deploy/helm/payment-bulk-orchestration-service -n payments -f values-<env>.yaml`; Flyway runs as the schema owner in the pre-install hook Job before the pods start | Bulk squad | Job succeeded; `flyway_schema_history` at V11; pods ready as `payment_bulk_app` | Pods not ready, migration Job failed (it stays for inspection; fix and re-run the upgrade) |
-| 5 | Relay stays off (`OUTBOX_RELAY_ENABLED=false`) until the platform has created `evt.pay.bulk.accepted.v1` and `evt.pay.bulk.rejected.v1` (the service never creates topics); then enable it | Bulk squad, platform | `outbox_pending_events` drains; `outbox_send_failures_total` flat | `outbox_parked_events` > 0 |
+| 5 | Relay stays off (`OUTBOX_RELAY_ENABLED=false`) until the platform has created `evt.pay.bulk.accepted.v1` and `evt.pay.bulk.rejected.v1` (the service never creates topics); then enable it | Bulk squad, platform | `outbox_pending_events` drains; `outbox_send_failures_total` flat | any increase of `outbox_parked_events_total` |
 | 6 | Smoke upload through the gateway with a test TPP (DPoP token, `INITIATEBULKPAYMENTS` consent, `Currency`) | Bulk squad | 202, then `Validated`, report figures equal the file; Accepted event on Kafka | Any 5xx, 401 on a valid proof, 503 from the consent check |
 | 7 | Freeze uploads on the monolith and drain it: wait until every monolith file is terminal or past its poll window | Bulk squad | No monolith file in a non-terminal state still being polled | Drain does not finish in the window |
 | 8 | Switch the gateway route `/open-finance/v1/file-payments/**` to this service | Mesh team | Smoke repeated; SLO checks below | See rollback triggers below |
@@ -116,7 +116,7 @@ Rollback triggers after step 8 (any one, sustained for 5 minutes):
 - HTTP 5xx above 1 % of requests;
 - 503 `CONSENT_SERVICE_UNAVAILABLE` above 0.5 % of uploads;
 - 401 `invalid_dpop_proof` above 5 % of requests (likely a gateway header or `htu` problem);
-- `outbox_parked_events` above 0.
+- any increase of `outbox_parked_events_total` (a row parked, by the relay or by an operator).
 
 ## 4. Observability Gate
 
@@ -124,7 +124,8 @@ Rollback triggers after step 8 (any one, sustained for 5 minutes):
    on every event as `correlationId`; `traceparent` is forwarded on events.
 2. Structured logs reach the central sink; no payee IBAN, customer id or file content is logged.
 3. Metrics (Prometheus, tag `service=svc-pay-bulk-orchestration`): request rate, latency and status codes;
-   `outbox_pending_events`, `outbox_oldest_pending_age_seconds`, `outbox_parked_events`,
+   `outbox_pending_events`, `outbox_oldest_pending_age_seconds`, `outbox_parked_rows` (rows parked now),
+   `outbox_parked_events_total{exception}` (every park; `exception="OperatorPark"` for a park done with the SQL below),
    `outbox_send_failures_total{exception}`.
 4. Alerts in place before step 8: the four rollback triggers above, plus `outbox_oldest_pending_age_seconds`
    above 300 s (pages the owner squad) and any increase of `outbox_send_failures_total`.
@@ -145,7 +146,8 @@ ADR-021 decision 4 (adr-runbooks #10 at 421f7b5 and the ruling e6dd76a):
   `TimeoutException`/`NetworkException`.
 
 Manual park (only when a row blocks the relay for a reason no fix will cure, decided by the owner squad). The
-reason is required; the database refuses a park without one:
+reason is required; the database refuses a park without one. The relay counts the park once on its next run
+(`outbox_parked_events_total{exception="OperatorPark"}`):
 
 ```sql
 UPDATE sc_pay_bulk_orchestration.outbox_event
@@ -161,7 +163,7 @@ FROM sc_pay_bulk_orchestration.outbox_event WHERE status = 'PARKED' ORDER BY cre
 
 -- Replaying the parked row unblocks the later events of its file.
 UPDATE sc_pay_bulk_orchestration.outbox_event
-SET status = 'PENDING', parked_at = NULL, parked_reason = NULL, attempts = 0, last_error = NULL
+SET status = 'PENDING', parked_at = NULL, parked_reason = NULL, park_counted = false, attempts = 0, last_error = NULL
 WHERE event_id = '<event id>';
 ```
 

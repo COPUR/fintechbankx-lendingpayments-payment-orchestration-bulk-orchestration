@@ -679,6 +679,8 @@ class BulkOrchestrationServiceIT {
         assertThat(parked.get("parked_at")).isNotNull();
         assertThat(parked.get("last_error")).isEqualTo("RecordTooLargeException");
         assertThat(parked.get("parked_reason")).isEqualTo("PAYLOAD_ERROR");
+        assertThat(jdbc.queryForObject("select park_counted from " + SCHEMA + ".outbox_event where aggregate_id = ?",
+                Boolean.class, fileId)).as("counted when the relay parked it").isTrue();
 
         // The database refuses a park without a reason (manual parks must record one).
         String eventId = jdbc.queryForObject("select event_id::text from " + SCHEMA + ".outbox_event"
@@ -686,6 +688,25 @@ class BulkOrchestrationServiceIT {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> jdbc.update("update " + SCHEMA + ".outbox_event"
                         + " set parked_reason = null where event_id = ?::uuid", eventId))
                 .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+    }
+
+    /** Runbook operator park: counted once in outbox_parked_events_total{exception="OperatorPark"}. */
+    @Test
+    void anOperatorParkIsCountedOnceByTheRelay() throws Exception {
+        String fileId = upload("IDEMP-OPPARK", csv("INS-1," + IBAN + ",10.00"), "PARTIAL_REJECTION");
+        PostgresTestDatabase.owner().update("update " + SCHEMA + ".outbox_event set status = 'PARKED', parked_at = now(),"
+                + " parked_reason = 'INC-1: topic ACL missing' where aggregate_id = ? and status = 'PENDING'", fileId);
+        io.micrometer.core.instrument.simple.SimpleMeterRegistry meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
+        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), Clock.systemUTC(),
+                100, Duration.ofSeconds(5), Duration.ofDays(7), meters);
+
+        assertThat(relay.relayOnce()).isZero();
+        assertThat(relay.relayOnce()).isZero();
+
+        assertThat(meters.get("outbox.parked.events").tag("exception", "OperatorPark").counter().count())
+                .as("counted once, not on every run").isEqualTo(1.0);
+        assertThat(jdbc.queryForObject("select park_counted from " + SCHEMA + ".outbox_event where aggregate_id = ?",
+                Boolean.class, fileId)).isTrue();
     }
 
     private OutboxRelay newRelay() {

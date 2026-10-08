@@ -46,9 +46,13 @@ import java.util.concurrent.TimeUnit;
  *   operator parks it by hand with a recorded reason (runbook). The alert is
  *   outbox.oldest.pending.age.seconds.</li>
  * </ul>
- * Every failed send increments {@value #FAILURE_COUNTER} tagged by exception
- * class only. last_error and logs carry the exception class, never record
- * content, payee IBANs or customer identifiers.
+ * Signals (platform Kafka guide 5f7d546): gauge
+ * outbox_oldest_pending_age_seconds (a stalled relay), counters
+ * {@value #FAILURE_COUNTER} (every failed send) and {@value #PARKED_COUNTER}
+ * (every parked row; alert on any increase), both tagged by exception class
+ * only. Operator parks (runbook SQL) are counted once by the relay under its
+ * lock, with exception="{@value #OPERATOR_PARK}". last_error and logs carry the
+ * exception class, never record content, payee IBANs or customer identifiers.
  */
 public class OutboxRelay {
 
@@ -56,6 +60,8 @@ public class OutboxRelay {
     static final Duration INITIAL_BACKOFF = Duration.ofSeconds(5);
     static final Duration MAX_BACKOFF = Duration.ofMinutes(5);
     static final String FAILURE_COUNTER = "outbox.send.failures";
+    static final String PARKED_COUNTER = "outbox.parked.events";
+    static final String OPERATOR_PARK = "OperatorPark";
     private static final Logger log = LoggerFactory.getLogger(OutboxRelay.class);
 
     private final SpringDataOutboxRepository outbox;
@@ -96,6 +102,7 @@ public class OutboxRelay {
             if (!outbox.tryRelayLock(RELAY_LOCK_KEY)) {
                 return 0;
             }
+            countOperatorParks();
             List<OutboxEventJpaEntity> batch = outbox.findPendingBatch(batchSize);
             Set<String> blockedAggregates = new HashSet<>();
             int sent = 0;
@@ -114,13 +121,14 @@ public class OutboxRelay {
                 } catch (Exception e) {
                     Instant now = clock.instant();
                     String failure = describe(e);
-                    registry.counter(FAILURE_COUNTER, "exception", failure).increment();
+                    recordSendFailure(e);
                     if (!isPayloadError(e)) {
                         pause(now, row, failure);
                         break;
                     }
                     row.markFailed(failure);
                     row.park(now, OutboxEventJpaEntity.PAYLOAD_ERROR);
+                    recordParked(failure);
                     blockedAggregates.add(row.getAggregateId());
                     log.error("Outbox relay parked event {} for {} on a payload error ({}); its file's later events"
                             + " wait until it is replayed by hand", row.getEventId(), row.getTopic(), failure);
@@ -129,6 +137,25 @@ public class OutboxRelay {
             return sent;
         });
         return published == null ? 0 : published;
+    }
+
+    /** Counts each failed send, tagged with the unwrapped exception class only. */
+    public void recordSendFailure(Throwable failure) {
+        registry.counter(FAILURE_COUNTER, "exception", describe(failure)).increment();
+    }
+
+    /** Counts a parked row; alert on any increase. */
+    public void recordParked(String exceptionClass) {
+        registry.counter(PARKED_COUNTER, "exception", exceptionClass).increment();
+    }
+
+    /** Operator parks happen in SQL; count each once (the caller holds the relay lock, so one replica does). */
+    private void countOperatorParks() {
+        for (OutboxEventJpaEntity parked : outbox.findUncountedParks()) {
+            parked.markParkCounted();
+            recordParked(OPERATOR_PARK);
+            log.warn("Outbox event {} for {} was parked by an operator", parked.getEventId(), parked.getTopic());
+        }
     }
 
     private void pause(Instant now, OutboxEventJpaEntity row, String failure) {
