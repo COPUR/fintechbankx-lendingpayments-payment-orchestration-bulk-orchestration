@@ -259,7 +259,7 @@ class BulkOrchestrationServiceIT {
                 {" ", "currency is required"},
                 {"XAU", "Unsupported Currency"},
                 {"aed", "Unsupported Currency"},
-                {"JPY", "Amount Precision Exceeds Currency Minor Units"}};
+                {"JPY", "Schema Validation Failed"}};
         int key = 0;
         for (String[] row : refused) {
             mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
@@ -295,6 +295,51 @@ class BulkOrchestrationServiceIT {
                 + " where aggregate_id = ? and event_type = 'Payments.BulkFile.Accepted.v1'", String.class, fileId));
         assertThat(event.at("/data/totalAmount").asText()).isEqualTo("1.734");
         assertThat(event.at("/data/currency").asText()).isEqualTo("KWD");
+    }
+
+    @Test
+    void storedTotalEventTotalAndReportShowTheSameFiguresWithoutRounding() throws Exception {
+        String fileId = upload("IDEMP-FIGURES", csv("INS-1," + IBAN + ",0.10", "INS-2," + IBAN + ",0.20",
+                "INS-3," + IBAN + ",999999999999.99"), "PARTIAL_REJECTION");
+        while (processor.processNextBatch() > 0) {
+            // drain
+        }
+
+        java.math.BigDecimal stored = jdbc.queryForObject("select total_amount from " + SCHEMA
+                + ".bulk_file where file_id = ?", java.math.BigDecimal.class, fileId);
+        JsonNode event = json.readTree(jdbc.queryForObject("select payload from " + SCHEMA + ".outbox_event"
+                + " where aggregate_id = ? and event_type = 'Payments.BulkFile.Accepted.v1'", String.class, fileId));
+        assertThat(event.at("/data/totalAmount").asText()).isEqualTo("1000000000000.29");
+        assertThat(stored).isEqualByComparingTo(event.at("/data/totalAmount").asText());
+
+        MvcResult report = mvc.perform(asTpp(get("/open-finance/v1/file-payments/{id}/report", fileId)))
+                .andExpect(status().isOk())
+                .andReturn();
+        JsonNode items = json.readTree(report.getResponse().getContentAsString()).at("/Data/Items");
+        java.math.BigDecimal reportSum = java.math.BigDecimal.ZERO;
+        for (JsonNode item : items) {
+            reportSum = reportSum.add(new java.math.BigDecimal(item.get("Amount").asText()));
+        }
+        assertThat(items.get(0).get("Amount").asText()).isEqualTo("0.10");
+        assertThat(items.get(2).get("Amount").asText()).isEqualTo("999999999999.99");
+        assertThat(reportSum).isEqualByComparingTo(stored);
+        assertThat(jdbc.queryForList("select amount from " + SCHEMA + ".bulk_item where file_id = ?"
+                + " order by line_number", java.math.BigDecimal.class, fileId))
+                .usingElementComparator(java.math.BigDecimal::compareTo)
+                .containsExactly(new java.math.BigDecimal("0.10"), new java.math.BigDecimal("0.20"),
+                        new java.math.BigDecimal("999999999999.99"));
+    }
+
+    @Test
+    void amountsTooLargeToStoreAreASchemaErrorNotAServerError() throws Exception {
+        String content = csv("INS-1," + IBAN + ",1000000000000000.00");
+        mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-HUGE")
+                        .contentType("application/json")
+                        .content(body("CONS-HUGE", "huge.csv", content, sha256(content), "PARTIAL_REJECTION")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Schema Validation Failed"));
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_file", Integer.class)).isZero();
     }
 
     @Test

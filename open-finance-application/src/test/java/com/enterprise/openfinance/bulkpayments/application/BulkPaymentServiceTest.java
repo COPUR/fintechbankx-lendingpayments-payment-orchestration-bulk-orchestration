@@ -295,7 +295,7 @@ class BulkPaymentServiceTest {
         assertThatThrownBy(() -> service.submitFile(command("IDEMP-CUR-2",
                 validCsv("INS-1," + IBAN + ",10.5"), BulkIntegrityMode.PARTIAL_REJECTION, "JPY")))
                 .isInstanceOf(BusinessRuleViolationException.class)
-                .hasMessage("Amount Precision Exceeds Currency Minor Units");
+                .hasMessage("Schema Validation Failed");
         assertThatThrownBy(() -> service.submitFile(command("IDEMP-CUR-3",
                 validCsv("INS-1," + IBAN + ",10.00"), BulkIntegrityMode.PARTIAL_REJECTION, "XAU")))
                 .isInstanceOf(BusinessRuleViolationException.class)

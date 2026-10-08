@@ -30,15 +30,33 @@ class BulkFileParserTest {
     }
 
     @Test
-    void rejectsAmountsFinerThanTheCurrencyMinorUnit() {
-        assertThatThrownBy(() -> BulkFileParser.parse(csv("INS-1," + GOOD_IBAN + ",10.001"),
+    void refusesAmountsFinerThanTheCurrencyMinorUnitAsASchemaError() {
+        for (String[] row : new String[][] {{"2500.255", "AED"}, {"10.001", "USD"}, {"10.5", "JPY"}}) {
+            assertThatThrownBy(() -> BulkFileParser.parse(csv("INS-1," + GOOD_IBAN + "," + row[0]),
+                    BulkIntegrityMode.PARTIAL_REJECTION, Currency.getInstance(row[1])))
+                    .as(row[0] + " " + row[1])
+                    .isInstanceOf(BusinessRuleViolationException.class)
+                    .hasMessage("Schema Validation Failed");
+        }
+        // The same figure is fine in a currency with three minor units.
+        assertThat(BulkFileParser.parse(csv("INS-1," + GOOD_IBAN + ",2500.255"),
+                BulkIntegrityMode.PARTIAL_REJECTION, KWD).totalAmount()).isEqualTo(Money.of("2500.255", "KWD"));
+    }
+
+    @Test
+    void refusesAmountsAndTotalsBeyondFifteenIntegerDigitsAsASchemaError() {
+        assertThat(BulkFileParser.parse(csv("INS-1," + GOOD_IBAN + ",999999999999999.99"),
+                BulkIntegrityMode.PARTIAL_REJECTION, AED).totalAmount())
+                .isEqualTo(Money.of("999999999999999.99", "AED"));
+        assertThatThrownBy(() -> BulkFileParser.parse(csv("INS-1," + GOOD_IBAN + ",1000000000000000.00"),
                 BulkIntegrityMode.PARTIAL_REJECTION, AED))
                 .isInstanceOf(BusinessRuleViolationException.class)
-                .hasMessage("Amount Precision Exceeds Currency Minor Units");
-        assertThatThrownBy(() -> BulkFileParser.parse(csv("INS-1," + GOOD_IBAN + ",10.5"),
-                BulkIntegrityMode.PARTIAL_REJECTION, JPY))
+                .hasMessage("Schema Validation Failed");
+        assertThatThrownBy(() -> BulkFileParser.parse(csv("INS-1," + GOOD_IBAN + ",999999999999999.99",
+                        "INS-2," + GOOD_IBAN + ",0.01"), BulkIntegrityMode.PARTIAL_REJECTION, AED))
+                .as("the file total must fit as well")
                 .isInstanceOf(BusinessRuleViolationException.class)
-                .hasMessage("Amount Precision Exceeds Currency Minor Units");
+                .hasMessage("Schema Validation Failed");
     }
 
     @Test
@@ -57,13 +75,13 @@ class BulkFileParserTest {
                 "INS-1," + GOOD_IBAN + ",10.00",
                 "",
                 "INS-2," + GOOD_IBAN + ",0.10",
-                "INS-3," + GOOD_IBAN + ",2500.255"), BulkIntegrityMode.PARTIAL_REJECTION, KWD);
+                "INS-3," + GOOD_IBAN + ",2500.25"), BulkIntegrityMode.PARTIAL_REJECTION, AED);
 
         assertThat(parsed.totalCount()).isEqualTo(3);
         assertThat(parsed.acceptedCount()).isEqualTo(3);
         assertThat(parsed.rejectedCount()).isZero();
-        assertThat(parsed.totalAmount().amount()).isEqualByComparingTo("2510.355");
-        assertThat(parsed.acceptedAmount().amount()).isEqualByComparingTo("2510.355");
+        assertThat(parsed.totalAmount()).isEqualTo(Money.of("2510.35", "AED"));
+        assertThat(parsed.acceptedAmount()).isEqualTo(Money.of("2510.35", "AED"));
         assertThat(parsed.targetStatus()).isEqualTo(BulkFileStatus.VALIDATED);
         assertThat(parsed.items()).extracting("lineNumber").containsExactly(1, 2, 3);
     }

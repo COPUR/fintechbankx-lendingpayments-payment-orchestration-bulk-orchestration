@@ -27,6 +27,8 @@ public final class BulkFileParser {
 
     public static final String EXPECTED_HEADER = "instruction_id,payee_iban,amount";
     static final String FULL_REJECTION_REASON = "Rejected due to full rejection mode";
+    /** Amounts and file totals are stored as NUMERIC(19, 4): at most 15 integer digits. */
+    static final int MAX_INTEGER_DIGITS = 15;
 
     private BulkFileParser() {
     }
@@ -116,6 +118,7 @@ public final class BulkFileParser {
         if (totalCount == 0) {
             throw new BusinessRuleViolationException("Empty Payload");
         }
+        requireStorable(totalAmount);
 
         if (mode == BulkIntegrityMode.FULL_REJECTION && rejected > 0) {
             List<BulkItemResult> allRejected = items.stream()
@@ -144,9 +147,19 @@ public final class BulkFileParser {
             throw new BusinessRuleViolationException("Schema Validation Failed");
         }
         if (amount.stripTrailingZeros().scale() > currency.getDefaultFractionDigits()) {
-            throw new BusinessRuleViolationException("Amount Precision Exceeds Currency Minor Units");
+            // Never rounded: an amount finer than the currency's minor units is a schema error.
+            throw new BusinessRuleViolationException("Schema Validation Failed");
         }
-        return new Money(amount, currency);
+        Money money = new Money(amount, currency);
+        requireStorable(money);
+        return money;
+    }
+
+    private static void requireStorable(Money money) {
+        BigDecimal value = money.amount();
+        if (value.precision() - value.scale() > MAX_INTEGER_DIGITS) {
+            throw new BusinessRuleViolationException("Schema Validation Failed");
+        }
     }
 
     static boolean isLikelyIban(String value) {

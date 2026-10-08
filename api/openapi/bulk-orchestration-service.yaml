@@ -79,7 +79,8 @@ paths:
                       description: >-
                         ISO 4217 currency of every amount in the file. Required and never
                         defaulted; an amount with more decimals than the currency's minor
-                        units (0 for JPY, 2 for AED, 3 for KWD) is refused with 400.
+                        units (0 for JPY, 2 for AED, 3 for KWD), or with more than 15 integer digits, is refused
+                        with 400 Schema Validation Failed.
                     IntegrityMode:
                       type: string
                       enum: [PARTIAL_REJECTION, FULL_REJECTION]
