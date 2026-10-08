@@ -121,6 +121,11 @@ Local boot without Kafka: set `DB_URL`, `DB_USERNAME`, `SPRING_DATASOURCE_PASSWO
 `java -jar open-finance-bootstrap/build/libs/payment-bulk-orchestration-service.jar`
 (API on 8080, management on 8081).
 
+Deployed, the pods verify Aurora's certificate: `DB_URL` must carry
+`sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem` (Terraform output
+`jdbc_url`), and the chart mounts the platform ConfigMap `rds-ca-bundle` there. Local
+runs and tests keep their own URLs.
+
 - Security: TPP-facing API, so DPoP is enforced (`Authorization: DPoP`, verified proof with a single-use jti, proof key = token `cnf.jkt`, `aud` = `svc-pay-bulk-orchestration`). Set `DPOP_REQUIRED=false` only for local runs with plain tokens.
 - Endpoints: `POST /open-finance/v1/file-payments`, `GET /open-finance/v1/file-payments/{fileId}`, `GET /open-finance/v1/file-payments/{fileId}/report` ([OpenAPI](./api/openapi/bulk-orchestration-service.yaml))
 - Money: the upload carries a required ISO 4217 `Currency` (the CSV `instruction_id,payee_iban,amount` has none). Amounts are kept and published at the currency's minor units and never rounded; a finer amount is 400.
