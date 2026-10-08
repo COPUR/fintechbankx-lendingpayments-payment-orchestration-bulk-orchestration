@@ -57,6 +57,8 @@ spring:
         enable.idempotence: true
         linger.ms: 5
         max.in.flight.requests.per.connection: 5
+        # Kafka requires delivery.timeout.ms >= linger.ms + request.timeout.ms (KafkaProducerConfigValidityTest).
+        request.timeout.ms: 20000
         delivery.timeout.ms: 30000
   security:
     oauth2:
@@ -150,7 +152,8 @@ openfinance:
         interval: PT1S
         batch-size: 100
         max-attempts: 10
-        send-timeout: PT10S
+        # Longer than delivery.timeout.ms, so the relay never gives up on a send the producer still retries.
+        send-timeout: PT35S
 
 logging:
   pattern:

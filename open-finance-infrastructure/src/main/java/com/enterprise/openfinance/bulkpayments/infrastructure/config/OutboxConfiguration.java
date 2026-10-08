@@ -72,7 +72,7 @@ public class OutboxConfiguration {
                                 Clock clock,
                                 @Value("${openfinance.bulkpayments.outbox.relay.batch-size:100}") int batchSize,
                                 @Value("${openfinance.bulkpayments.outbox.relay.max-attempts:10}") int maxAttempts,
-                                @Value("${openfinance.bulkpayments.outbox.relay.send-timeout:PT10S}") Duration sendTimeout,
+                                @Value("${openfinance.bulkpayments.outbox.relay.send-timeout:PT35S}") Duration sendTimeout,
                                 @Value("${openfinance.bulkpayments.outbox.retention:P7D}") Duration retention) {
             return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize,
                     maxAttempts, sendTimeout, retention);
