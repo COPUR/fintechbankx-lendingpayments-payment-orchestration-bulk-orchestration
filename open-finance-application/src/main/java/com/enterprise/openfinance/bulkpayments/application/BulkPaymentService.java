@@ -8,6 +8,7 @@ import com.enterprise.openfinance.bulkpayments.domain.exception.ResourceNotFound
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkConsentBinding;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkConsentContext;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFile;
+import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileStatus;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileReport;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkIdempotencyRecord;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkSettings;
@@ -81,9 +82,11 @@ public class BulkPaymentService implements BulkPaymentUseCase {
 
     /**
      * The idempotency record is read first: a retry of an accepted upload is
-     * answered as its replay, whatever has happened to the consent since (used
-     * up by this very file, revoked or expired). Only a new upload checks the
-     * consent. The consent call, the size and hash checks and the parse run
+     * answered as its replay, without reading the consent again (it may be used
+     * up by this very file). The exception is what is known locally: a file
+     * Stopped because its consent stopped being usable is refused with the one
+     * 403 body, as the monolith refused a retry under an unusable consent. Only
+     * a new upload reads the consent from the consent service. The consent call, the size and hash checks and the parse run
      * before any transaction, so no database connection is held while the
      * consent service answers or a large file is parsed. The transaction starts
      * at the idempotency reservation and covers the binding, the file, its
@@ -173,6 +176,11 @@ public class BulkPaymentService implements BulkPaymentUseCase {
                     }
                     BulkFile file = filePort.findById(record.fileId())
                             .orElseThrow(() -> new ResourceNotFoundException("Bulk file not found for idempotency record"));
+                    if (file.status() == BulkFileStatus.STOPPED) {
+                        // Known locally: the file was stopped because its consent is no longer usable. The
+                        // monolith checked the consent before replaying and refused; so do we, without a remote read.
+                        throw new ForbiddenException(ForbiddenException.CONSENT_NOT_USABLE);
+                    }
                     return new BulkUploadResult(file.fileId(), file.status(), command.interactionId(), true,
                             file.acceptedCount(), file.rejectedCount(), file.createdAt());
                 });

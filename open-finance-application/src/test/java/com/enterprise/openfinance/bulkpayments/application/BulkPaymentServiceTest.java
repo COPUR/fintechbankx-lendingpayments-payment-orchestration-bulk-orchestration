@@ -318,6 +318,33 @@ class BulkPaymentServiceTest {
      * The idempotency record is looked up before the consent: a retry of an accepted upload is answered as its
      * replay even when the consent has since been used up, revoked or has expired.
      */
+    /**
+     * The monolith checked the consent before the replay, so a retry under an unusable consent was 403. Here
+     * the replay stays ahead of the remote consent read, but a file Stopped because its consent is no longer
+     * usable is known locally: its retry is refused with the one 403 body, without calling the consent service.
+     */
+    @Test
+    void aRetryOfAStoppedFileIsRefusedFromLocalStateWithoutReadingTheConsent() {
+        BulkPaymentService service = service(settings(2));
+        BulkFileProcessingService processor = processor(settings(2));
+        String content = validCsv("INS-1," + IBAN + ",10.00", "INS-2," + IBAN + ",20.00", "INS-3," + IBAN + ",30.00");
+        BulkUploadResult upload = service.submitFile(command("IDEMP-STOP", content, BulkIntegrityMode.PARTIAL_REJECTION));
+        String consentId = "CONS-IDEMP-STOP";
+        consentPort.data.put(consentId, new BulkConsentContext(consentId, "TPP-001",
+                Set.of("INITIATEBULKPAYMENTS"), Instant.parse("2099-01-01T00:00:00Z"), false));
+        processor.processNextBatch();
+        assertThat(status(service, upload.fileId()).status()).isEqualTo(BulkFileStatus.STOPPED);
+        int readsBefore = consentPort.reads.get(consentId);
+
+        assertThatThrownBy(() -> service.submitFile(command("IDEMP-STOP", content, BulkIntegrityMode.PARTIAL_REJECTION)))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessage(ForbiddenException.CONSENT_NOT_USABLE);
+        assertThat(consentPort.reads.get(consentId)).as("decided locally").isEqualTo(readsBefore);
+        // Another body under the key is still the idempotency conflict, as before.
+        assertThatThrownBy(() -> service.submitFile(command("IDEMP-STOP", validCsv("INS-9," + IBAN + ",9.00"),
+                BulkIntegrityMode.PARTIAL_REJECTION))).isInstanceOf(IdempotencyConflictException.class);
+    }
+
     @Test
     void anAcceptedUploadIsReplayedEvenAfterItsConsentStoppedBeingUsable() {
         BulkPaymentService service = service(settings(2));

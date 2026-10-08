@@ -652,7 +652,8 @@ class BulkOrchestrationServiceIT {
         for (int line = 1; line <= 700; line++) {
             rows.add("INS-" + line + "," + IBAN + ",1.00");
         }
-        String fileId = upload("IDEMP-REVOKED", csv(rows.toArray(String[]::new)), "PARTIAL_REJECTION");
+        String content = csv(rows.toArray(String[]::new));
+        String fileId = upload("IDEMP-REVOKED", content, "PARTIAL_REJECTION");
         assertThat(processor.processNextBatch()).isEqualTo(500);
 
         when(consents.findById("CONS-IDEMP-REVOKED")).thenReturn(Optional.of(new BulkConsentContext(
@@ -681,6 +682,16 @@ class BulkOrchestrationServiceIT {
         assertThat(rejected.at("/data/reason").asText()).isEqualTo("CONSENT_NOT_USABLE");
         assertThat(rejected.at("/data/rejectedCount").asInt()).isEqualTo(700);
         assertThat(processor.processNextBatch()).isZero();
+
+        // A retry of the upload is refused from local state (the file is Stopped), as the monolith refused a
+        // retry under an unusable consent; the consent service is not asked again.
+        org.mockito.Mockito.clearInvocations(consents);
+        mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-REVOKED").contentType("application/json")
+                        .content(body("CONS-IDEMP-REVOKED", "file.csv", content, sha256(content), "PARTIAL_REJECTION")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("Consent not usable for this request"));
+        org.mockito.Mockito.verify(consents, org.mockito.Mockito.never()).findById(any());
     }
 
     @Test
