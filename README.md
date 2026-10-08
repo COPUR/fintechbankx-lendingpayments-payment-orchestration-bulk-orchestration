@@ -86,7 +86,7 @@ This repository participates in the FinTechBankX cell-based resilience program.
 | owning_tribe | Lending & Payments Tribe |
 | review_cadence | quarterly |
 | data_owner | Recurring and Bulk Payments Squad (schema `sc_pay_bulk_orchestration`) |
-| upstream_dependencies | svc-of-consent-authorization (consent reads), Keycloak realm `fintechbankx`, Kafka (MSK or Strimzi) |
+| upstream_dependencies | svc-of-consent-authorization (consent reads: `GET /api/v1/consents/{id}`, client credentials, `usable` decides), Keycloak realm `fintechbankx`, Kafka (MSK or Strimzi) |
 | published_events | `evt.pay.bulk.accepted.v1` (`Payments.BulkFile.Accepted.v1`), `evt.pay.bulk.completed.v1` (`Payments.BulkFile.Completed.v1`), `evt.pay.bulk.rejected.v1` (`Payments.BulkFile.Rejected.v1`) |
 | consumed_events | none (any future consumer dead-letters to `evt.pay.bulk.dlq.v1`) |
 

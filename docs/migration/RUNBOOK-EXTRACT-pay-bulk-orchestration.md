@@ -39,9 +39,12 @@ The chart ships a NetworkPolicy and no Istio policy. The mesh owners must ALLOW:
 - inbound to this service on 8080 from `cluster.local/ns/istio-ingress/sa/istio-ingressgateway`;
 - inbound to the consent service from `cluster.local/ns/payments/sa/payment-bulk-orchestration-service`.
 
-**Gap:** the consent service currently requires a `DPoP` Authorization scheme and has no
-service-to-service read. This service calls `GET /open-finance/v1/consents/{id}` with a Bearer client-credentials
-token. Until the consent owner adds that path, uploads fail closed with 503.
+Consent reads go to consent-authorization-service at `GET /api/v1/consents/{id}`
+(`CONSENT_SERVICE_BASE_URL=http://consent-authorization-service.open-finance.svc.cluster.local:8080`). They use this
+service's client-credentials Bearer token; Keycloak must add `aud` `svc-of-consent-authorization` to it. The
+`usable` field decides. 404 means no consent. 5xx, a timeout or a response without `usable` gives 503, and the upload
+fails closed. **Prerequisite:** that internal endpoint must be deployed by the consent owner. It is not in the local
+consent repository checkout as of 2026-10-08.
 
 ## 6. Cutover and rollback
 Cutover is routing only: point `/open-finance/v1/file-payments/**` at this service at the ingress.

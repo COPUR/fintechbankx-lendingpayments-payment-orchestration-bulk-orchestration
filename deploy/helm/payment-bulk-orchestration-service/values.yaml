@@ -60,7 +60,7 @@ config:
   DPOP_REQUIRED: "true"
   SERVICE_CLIENT_ID: svc-pay-bulk-orchestration
   CONSENT_ADAPTER: http
-  CONSENT_SERVICE_BASE_URL: http://consent-auth-service.open-finance.svc.cluster.local:8080
+  CONSENT_SERVICE_BASE_URL: http://consent-authorization-service.open-finance.svc.cluster.local:8080
   BULK_PROCESSING_ENABLED: "true"
   BULK_PROCESSING_BATCH_SIZE: "500"
   # Off until the evt.pay.bulk.*.v1 topics are in the platform catalog and created (runbook step 4).

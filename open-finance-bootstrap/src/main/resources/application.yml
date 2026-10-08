@@ -134,7 +134,7 @@ openfinance:
     consent:
       # http: consent service (default, fails closed). in-memory: seeded consents for local runs only.
       adapter: ${CONSENT_ADAPTER:http}
-      base-url: ${CONSENT_SERVICE_BASE_URL:http://consent-auth-service.open-finance.svc.cluster.local:8080}
+      base-url: ${CONSENT_SERVICE_BASE_URL:http://consent-authorization-service.open-finance.svc.cluster.local:8080}
       client-registration-id: consent-service
       connect-timeout: PT1S
       read-timeout: PT2S
