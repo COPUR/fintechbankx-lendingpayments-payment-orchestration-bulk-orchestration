@@ -62,6 +62,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import org.mockito.Mockito;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -403,6 +405,34 @@ class BulkOrchestrationServiceIT {
         upload("IDEMP-NO-TX", csv("INS-1," + IBAN + ",10.00"), "PARTIAL_REJECTION");
 
         assertThat(transactionActiveAtConsentRead).containsExactly(false);
+    }
+
+    /** Accept, the consent expires, retry: the replay is answered (HIT) before any consent check. */
+    @Test
+    void aRetryOfAnAcceptedUploadIsReplayedAfterItsConsentExpired() throws Exception {
+        String content = csv("INS-1," + IBAN + ",10.00");
+        String body = body("CONS-LAPSE", "payroll.csv", content, sha256(content), "PARTIAL_REJECTION");
+        String fileId = json.readTree(mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-LAPSE").contentType("application/json").content(body))
+                .andExpect(status().isAccepted())
+                .andReturn().getResponse().getContentAsString()).at("/Data/FilePaymentId").asText();
+        Mockito.doAnswer(call -> Optional.of(new BulkConsentContext(call.getArgument(0), "TPP-001",
+                        java.util.Set.of("INITIATEBULKPAYMENTS"), java.time.Instant.parse("2020-01-01T00:00:00Z"), false)))
+                .when(consents).findById(any());
+
+        mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-LAPSE").contentType("application/json").content(body))
+                .andExpect(status().isAccepted())
+                .andExpect(header().string("X-OF-Idempotency", "HIT"))
+                .andExpect(jsonPath("$.Data.FilePaymentId").value(fileId));
+
+        // A new upload under that consent gets the one 403 body.
+        String other = csv("INS-1," + IBAN + ",20.00");
+        mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-LAPSE-2").contentType("application/json")
+                        .content(body("CONS-LAPSE", "other.csv", other, sha256(other), "PARTIAL_REJECTION")))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.message").value("Consent not usable for this request"));
     }
 
     @Test

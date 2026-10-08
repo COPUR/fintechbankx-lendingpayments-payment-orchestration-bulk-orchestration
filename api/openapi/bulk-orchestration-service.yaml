@@ -94,6 +94,12 @@ paths:
                 $ref: '#/components/schemas/FilePaymentResponse'
         '400':
           description: Invalid file, hash, Currency or an amount finer than the currency's minor units.
+        '403':
+          description: >-
+            FORBIDDEN, message "Consent not usable for this request", for every consent the caller may not
+            use (unknown, another TPP's, not authorised, revoked, expired, without INITIATEBULKPAYMENTS); the
+            body never says which. A retry of an accepted upload (same key and body) is answered as its replay
+            before the consent is checked.
         '409':
           description: >-
             CONSENT_ALREADY_USED when the consent already authorised another file (a bulk consent
@@ -159,6 +165,10 @@ components:
       name: x-idempotency-key
       in: header
       required: true
+      description: >-
+        Unique per TPP and never reusable. A retry with the same key and body returns the original file
+        (header X-OF-Idempotency HIT), even after its consent was used up, revoked or expired; another body
+        under the key is 409 CONFLICT.
       schema:
         type: string
     JwsSignature:

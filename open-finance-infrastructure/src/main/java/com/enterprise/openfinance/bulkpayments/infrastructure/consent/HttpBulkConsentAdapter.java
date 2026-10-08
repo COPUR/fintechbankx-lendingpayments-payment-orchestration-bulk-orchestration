@@ -63,7 +63,7 @@ public class HttpBulkConsentAdapter implements BulkConsentPort {
             throw new ConsentServiceUnavailableException("Consent service returned an incomplete consent", null);
         }
         if (response.scopes() == null || response.scopes().isEmpty()) {
-            throw new ForbiddenException("Required scope missing: " + BulkConsentContext.INITIATE_BULK_PAYMENTS);
+            throw new ForbiddenException(ForbiddenException.CONSENT_NOT_USABLE);
         }
         return Optional.of(new BulkConsentContext(response.consentId(), response.participantId(), response.scopes(),
                 response.expiresAt(), response.usable()));

@@ -140,6 +140,6 @@ class HttpBulkConsentAdapterTest {
 
         assertThatThrownBy(() -> adapter.findById("CONS-1"))
                 .isInstanceOf(ForbiddenException.class)
-                .hasMessageContaining("INITIATEBULKPAYMENTS");
+                .hasMessage(ForbiddenException.CONSENT_NOT_USABLE);
     }
 }

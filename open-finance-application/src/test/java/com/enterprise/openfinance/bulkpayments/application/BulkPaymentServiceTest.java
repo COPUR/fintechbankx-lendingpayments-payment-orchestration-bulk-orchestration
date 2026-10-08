@@ -277,6 +277,27 @@ class BulkPaymentServiceTest {
                 .hasMessageContaining("Idempotency conflict");
     }
 
+    /**
+     * The idempotency record is looked up before the consent: a retry of an accepted upload is answered as its
+     * replay even when the consent has since been used up, revoked or has expired.
+     */
+    @Test
+    void anAcceptedUploadIsReplayedEvenAfterItsConsentStoppedBeingUsable() {
+        BulkPaymentService service = service(settings(2));
+        String content = validCsv("INS-1," + IBAN + ",10.00");
+        BulkUploadResult accepted = service.submitFile(command("IDEMP-800", content, BulkIntegrityMode.PARTIAL_REJECTION));
+
+        consentPort.data.put("CONS-IDEMP-800", new BulkConsentContext("CONS-IDEMP-800", "TPP-001",
+                Set.of("INITIATEBULKPAYMENTS"), Instant.parse("2026-02-01T00:00:00Z"), false));
+        BulkUploadResult retry = service.submitFile(command("IDEMP-800", content, BulkIntegrityMode.PARTIAL_REJECTION));
+
+        assertThat(retry.idempotencyReplay()).isTrue();
+        assertThat(retry.fileId()).isEqualTo(accepted.fileId());
+        assertThat(filePort.data).hasSize(1);
+        // A new upload on that consent is still refused.
+        assertForbidden(service, "CONS-IDEMP-800", content, ForbiddenException.CONSENT_NOT_USABLE);
+    }
+
     @Test
     void uploadThatLosesTheIdempotencyRaceAnswersAsReplayOfTheWinner() {
         BulkPaymentService service = service(settings(2));
@@ -368,23 +389,24 @@ class BulkPaymentServiceTest {
         BulkPaymentService service = service(settings(2));
         String content = validCsv("INS-1," + IBAN + ",10.00");
 
-        assertForbidden(service, "CONS-MISSING", content, "Consent not found");
+        // One 403 body for every consent the caller may not use: the reason is not disclosed.
+        assertForbidden(service, "CONS-MISSING", content, ForbiddenException.CONSENT_NOT_USABLE);
 
         consentPort.data.put("CONS-EXPIRED", new BulkConsentContext("CONS-EXPIRED", "TPP-001",
                 Set.of("INITIATEBULKPAYMENTS"), Instant.parse("2026-02-01T00:00:00Z"), true));
-        assertForbidden(service, "CONS-EXPIRED", content, "expired");
+        assertForbidden(service, "CONS-EXPIRED", content, ForbiddenException.CONSENT_NOT_USABLE);
 
         consentPort.data.put("CONS-OTHER-TPP", new BulkConsentContext("CONS-OTHER-TPP", "TPP-999",
                 Set.of("INITIATEBULKPAYMENTS"), Instant.parse("2099-01-01T00:00:00Z"), true));
-        assertForbidden(service, "CONS-OTHER-TPP", content, "participant mismatch");
+        assertForbidden(service, "CONS-OTHER-TPP", content, ForbiddenException.CONSENT_NOT_USABLE);
 
         consentPort.data.put("CONS-REVOKED", new BulkConsentContext("CONS-REVOKED", "TPP-001",
                 Set.of("INITIATEBULKPAYMENTS"), Instant.parse("2099-01-01T00:00:00Z"), false));
-        assertForbidden(service, "CONS-REVOKED", content, "not authorised");
+        assertForbidden(service, "CONS-REVOKED", content, ForbiddenException.CONSENT_NOT_USABLE);
 
         consentPort.data.put("CONS-RO", new BulkConsentContext("CONS-RO", "TPP-001",
                 Set.of("read-accounts"), Instant.parse("2099-01-01T00:00:00Z"), true));
-        assertForbidden(service, "CONS-RO", content, "Required scope missing: INITIATEBULKPAYMENTS");
+        assertForbidden(service, "CONS-RO", content, ForbiddenException.CONSENT_NOT_USABLE);
     }
 
     @Test
@@ -454,7 +476,7 @@ class BulkPaymentServiceTest {
                 "IDEMP-" + consentId, "payroll.csv", content, sha256(content), "AED", BulkIntegrityMode.PARTIAL_REJECTION,
                 "ix-1")))
                 .isInstanceOf(ForbiddenException.class)
-                .hasMessageContaining(message);
+                .hasMessage(message);
     }
 
     private static BulkFile status(BulkPaymentService service, String fileId) {

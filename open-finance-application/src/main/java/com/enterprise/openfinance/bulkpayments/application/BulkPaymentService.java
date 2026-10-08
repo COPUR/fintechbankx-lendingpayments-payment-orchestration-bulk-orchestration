@@ -46,8 +46,6 @@ import java.util.UUID;
 @Service
 public class BulkPaymentService implements BulkPaymentUseCase {
 
-    static final String REQUIRED_SCOPE = BulkConsentContext.INITIATE_BULK_PAYMENTS;
-
     private final BulkConsentPort consentPort;
     private final BulkConsentBindingPort bindingPort;
     private final BulkFilePort filePort;
@@ -82,24 +80,27 @@ public class BulkPaymentService implements BulkPaymentUseCase {
     }
 
     /**
-     * The consent call, the size and hash checks and the parse run before any
-     * transaction, so no database connection is held while the consent service
-     * answers or a large file is parsed. The transaction starts at the
-     * idempotency reservation and covers the binding, the file, its items and
-     * the outbox rows.
+     * The idempotency record is read first: a retry of an accepted upload is
+     * answered as its replay, whatever has happened to the consent since (used
+     * up by this very file, revoked or expired). Only a new upload checks the
+     * consent. The consent call, the size and hash checks and the parse run
+     * before any transaction, so no database connection is held while the
+     * consent service answers or a large file is parsed. The transaction starts
+     * at the idempotency reservation and covers the binding, the file, its
+     * items and the outbox rows.
      */
     @Override
     public BulkUploadResult submitFile(SubmitBulkFileCommand command) {
         Instant now = Instant.now(clock);
-        validateConsent(command.consentId(), command.tppId(), now);
-        Currency currency = BulkFileParser.currency(command.currency());
-        BulkFileParser.verifyPayload(command.fileContent(), settings.maxFileSizeBytes());
-        BulkFileParser.verifyHash(command.fileContent(), command.fileHash());
-
         Optional<BulkUploadResult> replay = lookupIdempotentReplay(command, now);
         if (replay.isPresent()) {
             return replay.orElseThrow();
         }
+
+        validateConsent(command.consentId(), command.tppId(), now);
+        Currency currency = BulkFileParser.currency(command.currency());
+        BulkFileParser.verifyPayload(command.fileContent(), settings.maxFileSizeBytes());
+        BulkFileParser.verifyHash(command.fileContent(), command.fileHash());
 
         ParsedBulkFile parsed = BulkFileParser.parse(command.fileContent(), command.integrityMode(), currency);
         BulkFile file = BulkFile.accept("FILE-BULK-" + UUID.randomUUID(), command.consentId(), command.tppId(),
@@ -180,21 +181,16 @@ public class BulkPaymentService implements BulkPaymentUseCase {
                 });
     }
 
+    /** Every refusal is the same 403: the caller learns nothing about another party's consent. */
     private void validateConsent(String consentId, String tppId, Instant now) {
-        BulkConsentContext consent = consentPort.findById(consentId)
-                .orElseThrow(() -> new ForbiddenException("Consent not found"));
-
-        if (!consent.belongsToTpp(tppId)) {
-            throw new ForbiddenException("Consent participant mismatch");
-        }
-        if (!consent.isAuthorized()) {
-            throw new ForbiddenException("Consent not authorised");
-        }
-        if (!consent.isActive(now)) {
-            throw new ForbiddenException("Consent expired");
-        }
-        if (!consent.allowsBulkInitiation()) {
-            throw new ForbiddenException("Required scope missing: " + REQUIRED_SCOPE);
+        boolean usable = consentPort.findById(consentId)
+                .filter(consent -> consent.belongsToTpp(tppId))
+                .filter(BulkConsentContext::isAuthorized)
+                .filter(consent -> consent.isActive(now))
+                .filter(BulkConsentContext::allowsBulkInitiation)
+                .isPresent();
+        if (!usable) {
+            throw new ForbiddenException(ForbiddenException.CONSENT_NOT_USABLE);
         }
     }
 
