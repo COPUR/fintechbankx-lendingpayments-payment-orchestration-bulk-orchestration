@@ -51,7 +51,12 @@ Cross-repo prerequisites, in this order (each must be done before the next start
      `Authorization: DPoP ...` and the `DPoP` header unchanged and set `X-Forwarded-Proto/Host/Prefix` to the
      public URL (the DPoP `htu` is checked against it);
    - (b) ServiceEntry / egress for the datastores `[aurora-postgresql, msk]` under the REGISTRY_ONLY outbound
-     policy (without it the DB readiness check fails and the relay cannot reach the brokers);
+     policy (without it the DB readiness check fails and the relay cannot reach the brokers), and Aurora egress
+     on 5432 in the mesh NetworkPolicy for every pod labelled
+     `app.kubernetes.io/name=payment-bulk-orchestration-service`: the API pods (`app.kubernetes.io/component=api`)
+     **and** the Flyway pre-install/pre-upgrade hook pod (`app.kubernetes.io/component=db-migration`, no Istio
+     sidecar). Without it the hook Job cannot reach Aurora and every install or upgrade stops before the pods
+     roll;
    - (c) callee ALLOW rules: inbound to this service on 8080 from
      `cluster.local/ns/istio-ingress/sa/istio-ingressgateway`; inbound to consent-authorization-service from
      `cluster.local/ns/payments/sa/payment-bulk-orchestration-service`.

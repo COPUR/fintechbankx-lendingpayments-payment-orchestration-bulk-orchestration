@@ -41,7 +41,7 @@ kind: Job
 metadata:
   name: {{ include "bulk.migrationName" . }}
   labels:
-    {{- include "bulk.labels" . | nindent 4 }}
+    {{- include "bulk.commonLabels" . | nindent 4 }}
     app.kubernetes.io/component: db-migration
   annotations:
     helm.sh/hook: pre-install,pre-upgrade
@@ -52,13 +52,14 @@ spec:
   activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
   template:
     metadata:
-      # Not the Deployment's selector labels: the Service, PDB, HPA and
-      # NetworkPolicy must not select the migration pod.
+      # app.kubernetes.io/name = the service account name, like the API pods:
+      # the mesh repo's NetworkPolicies grant Aurora egress (5432) by that label.
+      # Component db-migration keeps the pod out of every selector (they all
+      # require component api). No fintechbankx.io/service-id: platform
+      # scraping and alerts key on it, and a hook pod is not the service.
       labels:
-        app.kubernetes.io/name: {{ include "bulk.migrationName" . }}
-        app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- include "bulk.instanceLabels" . | nindent 8 }}
         app.kubernetes.io/component: db-migration
-        fintechbankx.io/service-id: {{ index .Values.podLabels "fintechbankx.io/service-id" }}
         fintechbankx.io/squad: {{ .Values.squad }}
         sidecar.istio.io/inject: {{ .Values.migration.istioSidecar | quote }}
       annotations:

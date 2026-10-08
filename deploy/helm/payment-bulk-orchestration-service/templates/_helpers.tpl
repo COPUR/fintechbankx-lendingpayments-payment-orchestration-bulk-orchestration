@@ -2,18 +2,38 @@
 {{- .Chart.Name -}}
 {{- end -}}
 
+{{- /*
+Every pod of the release, the API pods and the migration Job pod alike, carries
+app.kubernetes.io/name = the service account name: the mesh repo's
+NetworkPolicies grant Aurora egress (5432) by that label only. The component
+label keeps them apart: "api" for the Deployment, which every selector
+(Deployment, Service, PDB, NetworkPolicy, topology spread; the HPA targets the
+Deployment) requires, "db-migration" for the hook Job.
+*/ -}}
 {{- define "bulk.selectorLabels" -}}
+{{ include "bulk.instanceLabels" . }}
+app.kubernetes.io/component: api
+{{- end -}}
+
+{{- define "bulk.instanceLabels" -}}
 app.kubernetes.io/name: {{ include "bulk.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "bulk.labels" -}}
-{{ include "bulk.selectorLabels" . }}
+{{- /* Labels of every object, without the component (each template sets its own). */ -}}
+{{- define "bulk.commonLabels" -}}
+{{ include "bulk.instanceLabels" . }}
 app.kubernetes.io/version: {{ .Values.image.tag | default .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 fintechbankx.io/app: app-pay-bulk-orchestration
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
 fintechbankx.io/squad: {{ required "squad is required (payments)" .Values.squad }}
+{{- end -}}
+
+{{- /* Labels of the API's objects. */ -}}
+{{- define "bulk.labels" -}}
+{{ include "bulk.commonLabels" . }}
+app.kubernetes.io/component: api
 {{- end -}}
 
 {{- define "bulk.secretName" -}}
@@ -40,13 +60,14 @@ Usage: include "bulk.remoteKey" (list "externalSecret.remoteSecretName" .Values.
 
 {{- /*
 Labels of every ExternalSecret: the admission policy requires
-app.kubernetes.io/name = the service account name.
+app.kubernetes.io/name = the service account name. Without a component: each
+ExternalSecret adds its own (api or db-migration).
 */ -}}
 {{- define "bulk.externalSecretLabels" -}}
 {{- if ne (include "bulk.name" .) .Values.serviceAccount.name -}}
 {{- fail (printf "chart name %q must equal serviceAccount.name %q (ExternalSecret label app.kubernetes.io/name)" (include "bulk.name" .) .Values.serviceAccount.name) -}}
 {{- end -}}
-{{ include "bulk.labels" . }}
+{{ include "bulk.commonLabels" . }}
 {{- end -}}
 
 {{- define "bulk.migrationName" -}}

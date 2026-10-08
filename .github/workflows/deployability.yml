@@ -96,6 +96,17 @@ jobs:
           grep -q "proxy.istio.io/config: '{\"terminationDrainDuration\": \"55s\"}'" <<<"$deployment"
           test "$(grep -oE 'terminationGracePeriodSeconds: [0-9]+' <<<"$deployment" | awk '{print $2}')" -gt 55
           test "$(grep -c 'fintechbankx.io/squad: payments' <<<"$rendered")" -ge 5
+          # Pod labels and selection: API and Job pods both carry app.kubernetes.io/name=<SA> (mesh Aurora
+          # egress); no selector matches the Job pod; only the API pods carry fintechbankx.io/service-id.
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
+          helm template ci "$chart" --namespace payments $args --set networkPolicy.enabled=true \
+            | python3 scripts/ci/pod-selection.py "$sa" svc-pay-bulk-orchestration
+          # The check itself must catch a selector that would pick up the Job pod.
+          if helm template ci "$chart" --namespace payments $args \
+               | sed '/app.kubernetes.io\/component: api/d; /app.kubernetes.io\/component: db-migration/d' \
+               | python3 scripts/ci/pod-selection.py "$sa" svc-pay-bulk-orchestration 2>/dev/null; then
+            echo "pod-selection accepted selectors that match the migration Job pod" >&2; exit 1
+          fi
           # A missing required value must fail the render.
           if helm template ci "$chart" --set image.repository=x --set image.tag=y \
                --set externalSecret.remoteSecretName=dev/payment-bulk-orchestration-service/db-app \
