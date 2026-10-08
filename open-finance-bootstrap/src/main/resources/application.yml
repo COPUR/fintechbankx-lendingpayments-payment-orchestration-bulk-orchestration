@@ -69,6 +69,9 @@ spring:
         # Kafka requires delivery.timeout.ms >= linger.ms + request.timeout.ms (KafkaProducerConfigValidityTest).
         request.timeout.ms: 20000
         delivery.timeout.ms: 30000
+        # send() itself may block (metadata, full buffer) before the relay's wait starts; keep it
+        # below the relay send-timeout (KafkaProducerConfigValidityTest). Kafka's default is 60 s.
+        max.block.ms: 10000
   security:
     oauth2:
       resourceserver:

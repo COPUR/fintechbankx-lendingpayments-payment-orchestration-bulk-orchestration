@@ -40,7 +40,7 @@ class OutboxMetricsPrometheusTest {
         Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
         new OutboxConfiguration().outboxMetrics(registry, outbox, clock);
         OutboxRelay relay = new OutboxRelay(outbox, mock(KafkaTemplate.class), TransactionOperations.withoutTransaction(),
-                clock, 100, Duration.ofSeconds(1), Duration.ofDays(7), registry);
+                java.util.Optional::empty, clock, 100, Duration.ofSeconds(1), Duration.ofDays(7), registry);
 
         relay.recordSendFailure(new org.apache.kafka.common.errors.TimeoutException("x"));
         relay.recordParked("RecordTooLargeException");

@@ -52,7 +52,6 @@ class OutboxRelayTest {
         OutboxEventJpaEntity first = row("FILE-1", "evt.pay.bulk.accepted.v1");
         OutboxEventJpaEntity second = row("FILE-1", "evt.pay.bulk.rejected.v1");
         first.setTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
-        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
         when(outbox.findPendingBatch(100)).thenReturn(List.of(first, second));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
 
@@ -74,13 +73,100 @@ class OutboxRelayTest {
                         && record.headers().lastHeader("traceparent") == null));
     }
 
+    /** Review 5459741793 minor 2: no database transaction stays open while a send blocks on Kafka. */
+    @Test
+    void noTransactionIsOpenWhileASendBlocksAndOutcomesAreRecordedInShortTransactions() {
+        OutboxEventJpaEntity first = row("FILE-1", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity poison = row("FILE-2", "evt.pay.bulk.accepted.v1");
+        RecordingTransactions transactions = new RecordingTransactions();
+        FakeLock lock = new FakeLock();
+        List<Boolean> heldAtSend = new java.util.ArrayList<>();
+        List<Boolean> openAtSend = new java.util.ArrayList<>();
+        List<Boolean> openAtSave = new java.util.ArrayList<>();
+        when(outbox.findPendingBatch(100)).thenReturn(List.of(first, poison));
+        when(outbox.save(any(OutboxEventJpaEntity.class))).thenAnswer(invocation -> {
+            openAtSave.add(transactions.open);
+            return invocation.getArgument(0);
+        });
+        when(kafka.send(any(ProducerRecord.class)))
+                .thenAnswer(invocation -> {
+                    openAtSend.add(transactions.open);
+                    heldAtSend.add(lock.held);
+                    return CompletableFuture.completedFuture(mock(SendResult.class));
+                })
+                .thenAnswer(invocation -> {
+                    openAtSend.add(transactions.open);
+                    return CompletableFuture.failedFuture(new RecordTooLargeException("too large"));
+                });
+
+        assertThat(new OutboxRelay(outbox, kafka, transactions, lock, CLOCK, 100, Duration.ofSeconds(1),
+                Duration.ofDays(7), new SimpleMeterRegistry()).relayOnce()).isEqualTo(1);
+
+        assertThat(openAtSend).containsExactly(false, false);
+        assertThat(heldAtSend).as("one relayer: the lock spans the sends").containsExactly(true);
+        assertThat(lock.held).as("released after the run").isFalse();
+        // Published and parked are each written in their own short transaction.
+        assertThat(openAtSave).containsExactly(true, true);
+        assertThat(first.getStatus()).isEqualTo(OutboxEventJpaEntity.PUBLISHED);
+        assertThat(poison.getStatus()).isEqualTo(OutboxEventJpaEntity.PARKED);
+    }
+
+    @Test
+    void theLockIsReleasedWhenRecordingAnOutcomeFails() {
+        OutboxEventJpaEntity row = row("FILE-1", "evt.pay.bulk.accepted.v1");
+        FakeLock lock = new FakeLock();
+        when(outbox.findPendingBatch(100)).thenReturn(List.of(row));
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
+        when(outbox.save(any(OutboxEventJpaEntity.class)))
+                .thenThrow(new org.springframework.dao.DataAccessResourceFailureException("database gone"));
+        OutboxRelay relay = new OutboxRelay(outbox, kafka, TransactionOperations.withoutTransaction(), lock, CLOCK, 100,
+                Duration.ofSeconds(1), Duration.ofDays(7), new SimpleMeterRegistry());
+
+        assertThatThrownBy(relay::relayOnce).isInstanceOf(org.springframework.dao.DataAccessResourceFailureException.class);
+
+        assertThat(lock.held).isFalse();
+        assertThat(lock.acquired).isEqualTo(1);
+    }
+
+    /** A lock that is always free; records whether it is held. */
+    private static final class FakeLock implements RelayLock {
+        boolean held;
+        int acquired;
+
+        @Override
+        public java.util.Optional<Held> tryAcquire() {
+            assertThat(held).as("not re-entered").isFalse();
+            held = true;
+            acquired++;
+            return java.util.Optional.of(() -> held = false);
+        }
+    }
+
+    /** Another replica holds the lock. */
+    private static final RelayLock TAKEN = java.util.Optional::empty;
+
+    /** Counts transactions and knows whether one is open, like TransactionTemplate around a callback. */
+    private static final class RecordingTransactions implements TransactionOperations {
+        boolean open;
+
+        @Override
+        public <T> T execute(org.springframework.transaction.support.TransactionCallback<T> action) {
+            assertThat(open).as("transactions are never nested").isFalse();
+            open = true;
+            try {
+                return action.doInTransaction(new org.springframework.transaction.support.SimpleTransactionStatus());
+            } finally {
+                open = false;
+            }
+        }
+    }
+
     @Test
     void retriableErrorsStopTheBatchWithoutMarkingAnyRowAndNeverParkHoweverLongTheyLast() {
         MutableClock clock = new MutableClock(NOW);
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
         OutboxEventJpaEntity failing = row("FILE-1", "evt.pay.bulk.accepted.v1");
         OutboxEventJpaEntity later = row("FILE-2", "evt.pay.bulk.accepted.v1");
-        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
         when(outbox.findPendingBatch(100)).thenReturn(List.of(failing, later));
         when(kafka.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.failedFuture(new TimeoutException("Expiring 1 record(s)")))
@@ -109,11 +195,10 @@ class OutboxRelayTest {
     @Test
     void theRelaysOwnSendTimeoutIsNotAPayloadError() {
         OutboxEventJpaEntity row = row("FILE-1", "evt.pay.bulk.accepted.v1");
-        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
         when(outbox.findPendingBatch(100)).thenReturn(List.of(row));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(new CompletableFuture<>());
 
-        assertThat(new OutboxRelay(outbox, kafka, TransactionOperations.withoutTransaction(), CLOCK, 100,
+        assertThat(new OutboxRelay(outbox, kafka, TransactionOperations.withoutTransaction(), new FakeLock(), CLOCK, 100,
                 Duration.ofMillis(5), Duration.ofDays(7), new SimpleMeterRegistry()).relayOnce()).isZero();
 
         assertThat(row.getStatus()).isEqualTo(OutboxEventJpaEntity.PENDING);
@@ -132,13 +217,12 @@ class OutboxRelayTest {
             SpringDataOutboxRepository repo = mock(SpringDataOutboxRepository.class);
             KafkaTemplate<String, String> template = mock(KafkaTemplate.class);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
-            when(repo.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
             when(repo.findPendingBatch(100)).thenReturn(List.of(poison, other));
             when(template.send(any(ProducerRecord.class)))
                     .thenReturn(CompletableFuture.failedFuture(failure))
                     .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
 
-            assertThat(new OutboxRelay(repo, template, TransactionOperations.withoutTransaction(), CLOCK, 100,
+            assertThat(new OutboxRelay(repo, template, TransactionOperations.withoutTransaction(), new FakeLock(), CLOCK, 100,
                     Duration.ofSeconds(1), Duration.ofDays(7), registry)
                     .relayOnce()).as(failure.getClass().getSimpleName()).isEqualTo(1);
 
@@ -165,7 +249,6 @@ class OutboxRelayTest {
         org.springframework.test.util.ReflectionTestUtils.setField(operatorParked, "parkedAt", NOW);
         org.springframework.test.util.ReflectionTestUtils.setField(operatorParked, "parkedReason", "INC-1: topic ACL");
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
         when(outbox.findUncountedParks()).thenReturn(List.of(operatorParked)).thenReturn(List.of());
         when(outbox.findPendingBatch(100)).thenReturn(List.of());
         OutboxRelay relay = relay(CLOCK, registry);
@@ -184,9 +267,9 @@ class OutboxRelayTest {
     @Test
     void parksAreNotCountedByAReplicaWithoutTheRelayLock() {
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(false);
 
-        relay(CLOCK, registry).relayOnce();
+        new OutboxRelay(outbox, kafka, TransactionOperations.withoutTransaction(), TAKEN, CLOCK, 100,
+                Duration.ofSeconds(1), Duration.ofDays(7), registry).relayOnce();
 
         verify(outbox, never()).findUncountedParks();
         assertThat(registry.find(OutboxRelay.PARKED_COUNTER).counters()).isEmpty();
@@ -197,7 +280,6 @@ class OutboxRelayTest {
         OutboxEventJpaEntity poison = row("FILE-1", "evt.pay.bulk.accepted.v1");
         OutboxEventJpaEntity sameFile = row("FILE-1", "evt.pay.bulk.rejected.v1");
         OutboxEventJpaEntity otherFile = row("FILE-2", "evt.pay.bulk.accepted.v1");
-        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
         when(outbox.findPendingBatch(100)).thenReturn(List.of(poison, sameFile, otherFile));
         when(kafka.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.failedFuture(new RecordTooLargeException("too large")))
@@ -245,7 +327,6 @@ class OutboxRelayTest {
         OutboxEventJpaEntity later = row("FILE-2", "evt.pay.bulk.accepted.v1");
         SpringDataOutboxRepository repo = mock(SpringDataOutboxRepository.class);
         KafkaTemplate<String, String> template = mock(KafkaTemplate.class);
-        when(repo.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
         when(repo.findPendingBatch(100)).thenReturn(List.of(first, later));
         when(template.send(any(ProducerRecord.class))).thenThrow(failure)
                 .thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
@@ -277,7 +358,6 @@ class OutboxRelayTest {
     void backoffDoublesUpToItsCeilingAndResetsAfterASuccess() {
         MutableClock clock = new MutableClock(NOW);
         OutboxEventJpaEntity row = row("FILE-1", "evt.pay.bulk.accepted.v1");
-        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
         when(outbox.findPendingBatch(100)).thenReturn(List.of(row));
         when(kafka.send(any(ProducerRecord.class))).thenThrow(new IllegalStateException("x"));
         OutboxRelay relay = relay(clock, new SimpleMeterRegistry());
@@ -311,9 +391,8 @@ class OutboxRelayTest {
 
     @Test
     void anotherReplicaHoldingTheLockMeansNothingIsSent() {
-        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(false);
-
-        assertThat(relay(CLOCK).relayOnce()).isZero();
+        assertThat(new OutboxRelay(outbox, kafka, TransactionOperations.withoutTransaction(), TAKEN, CLOCK, 100,
+                Duration.ofSeconds(1), Duration.ofDays(7), new SimpleMeterRegistry()).relayOnce()).isZero();
 
         verify(outbox, never()).findPendingBatch(any(Integer.class));
         verify(kafka, never()).send(any(ProducerRecord.class));
@@ -322,7 +401,6 @@ class OutboxRelayTest {
     @Test
     void interruptedSendStopsTheBatch() {
         OutboxEventJpaEntity row = row("FILE-1", "evt.pay.bulk.accepted.v1");
-        when(outbox.tryRelayLock(OutboxRelay.RELAY_LOCK_KEY)).thenReturn(true);
         when(outbox.findPendingBatch(100)).thenReturn(List.of(row));
         CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
         when(kafka.send(any(ProducerRecord.class))).thenReturn(future);
@@ -344,7 +422,7 @@ class OutboxRelayTest {
 
     @Test
     void rejectsNonPositiveLimits() {
-        assertThatThrownBy(() -> new OutboxRelay(outbox, kafka, TransactionOperations.withoutTransaction(), CLOCK,
+        assertThatThrownBy(() -> new OutboxRelay(outbox, kafka, TransactionOperations.withoutTransaction(), new FakeLock(), CLOCK,
                 0, Duration.ofSeconds(1), Duration.ofDays(1), new SimpleMeterRegistry()))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -359,7 +437,7 @@ class OutboxRelayTest {
 
     private static OutboxRelay relay(SpringDataOutboxRepository repo, KafkaTemplate<String, String> template,
                                      Clock clock, SimpleMeterRegistry registry) {
-        return new OutboxRelay(repo, template, TransactionOperations.withoutTransaction(), clock, 100,
+        return new OutboxRelay(repo, template, TransactionOperations.withoutTransaction(), new FakeLock(), clock, 100,
                 Duration.ofSeconds(1), Duration.ofDays(7), registry);
     }
 

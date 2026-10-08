@@ -11,6 +11,8 @@ import com.enterprise.openfinance.bulkpayments.domain.port.in.ProcessBulkFilesUs
 import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkConsentPort;
 import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkFilePort;
 import com.enterprise.openfinance.bulkpayments.infrastructure.outbox.OutboxRelay;
+import com.enterprise.openfinance.bulkpayments.infrastructure.outbox.PostgresSessionRelayLock;
+import com.enterprise.openfinance.bulkpayments.infrastructure.outbox.RelayLock;
 import com.enterprise.openfinance.bulkpayments.infrastructure.outbox.SpringDataOutboxRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.nimbusds.jose.JOSEObjectType;
@@ -118,6 +120,7 @@ class BulkOrchestrationServiceIT {
     @Autowired BulkFilePort files;
     @Autowired SpringDataOutboxRepository outbox;
     @Autowired PlatformTransactionManager transactionManager;
+    @Autowired javax.sql.DataSource dataSource;
     @MockBean KafkaTemplate<String, String> kafka;
     /** Signature and aud checks are unit-tested in JwtValidationTest; here tokens map to fixed claims. */
     @MockBean JwtDecoder jwtDecoder;
@@ -757,7 +760,7 @@ class BulkOrchestrationServiceIT {
         PostgresTestDatabase.owner().update("update " + SCHEMA + ".outbox_event set status = 'PARKED', parked_at = now(),"
                 + " parked_reason = 'INC-1: topic ACL missing' where aggregate_id = ? and status = 'PENDING'", fileId);
         io.micrometer.core.instrument.simple.SimpleMeterRegistry meters = new io.micrometer.core.instrument.simple.SimpleMeterRegistry();
-        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), Clock.systemUTC(),
+        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), relayLock(), Clock.systemUTC(),
                 100, Duration.ofSeconds(5), Duration.ofDays(7), meters);
 
         assertThat(relay.relayOnce()).isZero();
@@ -769,8 +772,55 @@ class BulkOrchestrationServiceIT {
                 Boolean.class, fileId)).isTrue();
     }
 
+    private RelayLock relayLock() {
+        return new PostgresSessionRelayLock(dataSource, OutboxRelay.RELAY_LOCK_KEY);
+    }
+
+    /**
+     * Review 5459741793 minor 2: while a send blocks, the relay holds no database transaction (its runtime
+     * role has no session idle in a transaction) yet keeps the session advisory lock, so a second replica
+     * relays nothing; the lock is released after the run.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void whileASendBlocksNoTransactionIsOpenAndAnotherReplicaRelaysNothing() throws Exception {
+        String fileId = upload("IDEMP-RELAY-TX", csv("INS-1," + IBAN + ",10.00"), "PARTIAL_REJECTION");
+        OutboxRelay otherReplica = newRelay();
+        List<Boolean> transactionActive = new java.util.ArrayList<>();
+        List<Integer> idleInTransaction = new java.util.ArrayList<>();
+        List<Integer> advisoryLocks = new java.util.ArrayList<>();
+        List<Integer> otherReplicaSent = new java.util.ArrayList<>();
+        Mockito.doAnswer(invocation -> {
+            transactionActive.add(org.springframework.transaction.support.TransactionSynchronizationManager
+                    .isActualTransactionActive());
+            idleInTransaction.add(PostgresTestDatabase.owner().queryForObject("select count(*) from pg_stat_activity"
+                    + " where usename = ? and state like 'idle in transaction%'", Integer.class,
+                    PostgresTestDatabase.RUNTIME_ROLE));
+            advisoryLocks.add(relayLocksHeld());
+            otherReplicaSent.add(otherReplica.relayOnce());
+            return CompletableFuture.completedFuture((SendResult<String, String>) null);
+        }).when(kafka).send(any(ProducerRecord.class));
+
+        assertThat(newRelay().relayOnce()).isEqualTo(1);
+
+        assertThat(transactionActive).containsExactly(false);
+        assertThat(idleInTransaction).as("no session of the runtime role sits in an open transaction").containsExactly(0);
+        assertThat(advisoryLocks).containsExactly(1);
+        assertThat(otherReplicaSent).containsExactly(0);
+        assertThat(relayLocksHeld()).as("released after the run").isZero();
+        assertThat(jdbc.queryForObject("select status from " + SCHEMA + ".outbox_event where aggregate_id = ?",
+                String.class, fileId)).isEqualTo("PUBLISHED");
+    }
+
+    private static int relayLocksHeld() {
+        long key = OutboxRelay.RELAY_LOCK_KEY;
+        return PostgresTestDatabase.owner().queryForObject("select count(*) from pg_locks where locktype = 'advisory'"
+                + " and granted and objsubid = 1 and classid::bigint = ? and objid::bigint = ?", Integer.class,
+                key >>> 32, key & 0xFFFFFFFFL);
+    }
+
     private OutboxRelay newRelay() {
-        return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), Clock.systemUTC(), 100,
+        return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), relayLock(), Clock.systemUTC(), 100,
                 Duration.ofSeconds(5), Duration.ofDays(7), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
     }
 
@@ -780,7 +830,7 @@ class BulkOrchestrationServiceIT {
         String blocked = upload("IDEMP-BLOCK-1", csv("INS-1,AE000,10.00"), "FULL_REJECTION");
         processor.processNextBatch(); // Accepted then Rejected for the same file
         String other = upload("IDEMP-BLOCK-2", csv("INS-1," + IBAN + ",10.00"), "PARTIAL_REJECTION");
-        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
+        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), relayLock(),
                 Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7),
                 new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
         when(kafka.send(any(ProducerRecord.class)))
@@ -805,7 +855,7 @@ class BulkOrchestrationServiceIT {
         processor.processNextBatch();
         when(kafka.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
-        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
+        OutboxRelay relay = new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), relayLock(),
                 Clock.systemUTC(), 100, Duration.ofSeconds(5), Duration.ofDays(7),
                 new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
 

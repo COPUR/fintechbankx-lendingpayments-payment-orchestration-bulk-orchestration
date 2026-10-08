@@ -39,6 +39,19 @@ class KafkaProducerConfigValidityTest {
         assertThat(relayWait.toMillis()).isGreaterThan(delivery);
     }
 
+    /**
+     * send() itself blocks (metadata, a full buffer) for up to max.block.ms before the relay's
+     * own wait starts; Kafka's default of 60 s would outlast the relay's send timeout.
+     */
+    @Test
+    void sendBlocksForLessThanTheRelaySendTimeout() {
+        long maxBlock = producerLong("max.block.ms", 60_000);
+        Duration relayWait = DurationStyle.detectAndParse(
+                yaml.getProperty("openfinance.bulkpayments.outbox.relay.send-timeout"));
+
+        assertThat(maxBlock).isLessThan(relayWait.toMillis());
+    }
+
     private long producerLong(String key, long kafkaDefault) {
         String value = yaml.getProperty("spring.kafka.producer.properties." + key);
         return value == null ? kafkaDefault : Long.parseLong(value);

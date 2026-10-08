@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
@@ -25,9 +26,12 @@ import java.util.concurrent.TimeUnit;
 /**
  * Relays committed outbox rows to Kafka in insertion order.
  *
- * One replica relays at a time (Postgres advisory lock), so the service can
- * scale out without reordering a file's events. Consumers de-duplicate on
- * eventId, which makes the at-least-once delivery safe.
+ * One replica relays at a time ({@link RelayLock}: a session-level Postgres
+ * advisory lock held for the whole run), so the service can scale out without
+ * reordering a file's events. No database transaction is open while a send
+ * waits on Kafka: the batch is claimed in a short transaction and each outcome
+ * is recorded in its own. Consumers de-duplicate on eventId, which makes the
+ * at-least-once delivery safe.
  *
  * Failures follow ADR-021 decision 4 (adr-runbooks #10, 421f7b5 and the ruling
  * e6dd76a):
@@ -58,7 +62,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class OutboxRelay {
 
-    static final long RELAY_LOCK_KEY = 0x7061795F62756CL; // "pay_bul"
+    public static final long RELAY_LOCK_KEY = 0x7061795F62756CL; // "pay_bul"
     static final Duration INITIAL_BACKOFF = Duration.ofSeconds(5);
     static final Duration MAX_BACKOFF = Duration.ofMinutes(5);
     static final String FAILURE_COUNTER = "outbox.send.failures";
@@ -69,6 +73,7 @@ public class OutboxRelay {
     private final SpringDataOutboxRepository outbox;
     private final KafkaTemplate<String, String> kafka;
     private final TransactionOperations transactions;
+    private final RelayLock relayLock;
     private final Clock clock;
     private final int batchSize;
     private final Duration sendTimeout;
@@ -78,7 +83,7 @@ public class OutboxRelay {
     private Instant pausedUntil = Instant.MIN;
 
     public OutboxRelay(SpringDataOutboxRepository outbox, KafkaTemplate<String, String> kafka,
-                       TransactionOperations transactions, Clock clock, int batchSize,
+                       TransactionOperations transactions, RelayLock relayLock, Clock clock, int batchSize,
                        Duration sendTimeout, Duration retention, MeterRegistry registry) {
         if (batchSize <= 0) {
             throw new IllegalArgumentException("batchSize must be positive");
@@ -86,6 +91,7 @@ public class OutboxRelay {
         this.outbox = outbox;
         this.kafka = kafka;
         this.transactions = transactions;
+        this.relayLock = relayLock;
         this.clock = clock;
         this.batchSize = batchSize;
         this.sendTimeout = sendTimeout;
@@ -94,51 +100,75 @@ public class OutboxRelay {
     }
 
     /**
+     * One run: under the relay lock, claim the batch in a short transaction,
+     * send each row with no transaction open, and record each outcome in its
+     * own short transaction (review 5459741793, minor 2). A row whose send
+     * succeeded but whose PUBLISHED mark did not commit is sent again next run;
+     * consumers de-duplicate on eventId.
+     *
      * @return number of events published in this run
      */
     public synchronized int relayOnce() {
         if (clock.instant().isBefore(pausedUntil)) {
             return 0;
         }
-        Integer published = transactions.execute(status -> {
-            if (!outbox.tryRelayLock(RELAY_LOCK_KEY)) {
-                return 0;
+        Optional<RelayLock.Held> lock = relayLock.tryAcquire();
+        if (lock.isEmpty()) {
+            return 0;
+        }
+        try (RelayLock.Held held = lock.get()) {
+            List<OutboxEventJpaEntity> batch = transactions.execute(status -> {
+                countOperatorParks();
+                return outbox.findPendingBatch(batchSize);
+            });
+            return batch == null ? 0 : send(batch);
+        }
+    }
+
+    /** Sends outside any transaction; the rows are detached copies, saved back one at a time. */
+    private int send(List<OutboxEventJpaEntity> batch) {
+        Set<String> blockedAggregates = new HashSet<>();
+        int sent = 0;
+        for (OutboxEventJpaEntity row : batch) {
+            if (blockedAggregates.contains(row.getAggregateId())) {
+                continue;
             }
-            countOperatorParks();
-            List<OutboxEventJpaEntity> batch = outbox.findPendingBatch(batchSize);
-            Set<String> blockedAggregates = new HashSet<>();
-            int sent = 0;
-            for (OutboxEventJpaEntity row : batch) {
-                if (blockedAggregates.contains(row.getAggregateId())) {
-                    continue;
-                }
-                try {
-                    kafka.send(toRecord(row)).get(sendTimeout.toMillis(), TimeUnit.MILLISECONDS);
-                    row.markPublished(clock.instant());
-                    sent++;
-                    backoff = INITIAL_BACKOFF;
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
+            try {
+                kafka.send(toRecord(row)).get(sendTimeout.toMillis(), TimeUnit.MILLISECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Exception e) {
+                Instant now = clock.instant();
+                String failure = describe(e);
+                recordSendFailure(e);
+                if (!isPayloadError(e)) {
+                    pause(now, row, failure);
                     break;
-                } catch (Exception e) {
-                    Instant now = clock.instant();
-                    String failure = describe(e);
-                    recordSendFailure(e);
-                    if (!isPayloadError(e)) {
-                        pause(now, row, failure);
-                        break;
-                    }
+                }
+                save(row, () -> {
                     row.markFailed(failure);
                     row.park(now, OutboxEventJpaEntity.PAYLOAD_ERROR);
-                    recordParked(failure);
-                    blockedAggregates.add(row.getAggregateId());
-                    log.error("Outbox relay parked event {} for {} on a payload error ({}); its file's later events"
-                            + " wait until it is replayed by hand", row.getEventId(), row.getTopic(), failure);
-                }
+                });
+                recordParked(failure);
+                blockedAggregates.add(row.getAggregateId());
+                log.error("Outbox relay parked event {} for {} on a payload error ({}); its file's later events"
+                        + " wait until it is replayed by hand", row.getEventId(), row.getTopic(), failure);
+                continue;
             }
-            return sent;
+            Instant publishedAt = clock.instant();
+            save(row, () -> row.markPublished(publishedAt));
+            sent++;
+            backoff = INITIAL_BACKOFF;
+        }
+        return sent;
+    }
+
+    private void save(OutboxEventJpaEntity row, Runnable change) {
+        transactions.executeWithoutResult(status -> {
+            change.run();
+            outbox.save(row);
         });
-        return published == null ? 0 : published;
     }
 
     /** Counts each failed send, tagged with the unwrapped exception class only. */
@@ -151,7 +181,7 @@ public class OutboxRelay {
         registry.counter(PARKED_COUNTER, "exception", exceptionClass).increment();
     }
 
-    /** Operator parks happen in SQL; count each once (the caller holds the relay lock, so one replica does). */
+    /** Operator parks happen in SQL; count each once (the caller holds the relay lock, so one replica does). Runs in the claim transaction. */
     private void countOperatorParks() {
         for (OutboxEventJpaEntity parked : outbox.findUncountedParks()) {
             parked.markParkCounted();

@@ -13,13 +13,6 @@ import java.util.UUID;
 public interface SpringDataOutboxRepository extends JpaRepository<OutboxEventJpaEntity, UUID> {
 
     /**
-     * Takes the cluster-wide relay lock for the current transaction. Only one
-     * replica relays at a time, which keeps each file's events in order.
-     */
-    @Query(value = "select pg_try_advisory_xact_lock(:key)", nativeQuery = true)
-    boolean tryRelayLock(@Param("key") long key);
-
-    /**
      * Pending rows in insertion order, skipping every row of an aggregate that has a
      * PARKED row: a parked event keeps its file blocked until it is replayed (ADR-021 decision 4).
      */

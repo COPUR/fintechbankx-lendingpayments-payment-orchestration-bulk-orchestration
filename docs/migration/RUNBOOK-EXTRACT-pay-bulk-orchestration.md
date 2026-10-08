@@ -155,6 +155,12 @@ ADR-021 decision 4 (adr-runbooks #10 at 421f7b5 and the ruling e6dd76a):
   relay backs off (5 s doubling to 5 min) and retries. Such a row is never parked automatically, however long the
   failure lasts; there is no time ceiling.
 - `last_error`, logs and metric tags carry the exception class only, never record content or identifiers.
+- One replica relays at a time: a session-level advisory lock (`pg_try_advisory_lock`) held on one pooled
+  connection, in autocommit, for the whole run. The batch is claimed in a short transaction, each send runs with no
+  transaction open, and each outcome (PUBLISHED, or PARKED on a payload error) is written in its own short
+  transaction. A blocked send therefore holds one idle connection and the lock, never row locks or an open
+  transaction. `max.block.ms` (10 s) and `delivery.timeout.ms` (30 s) stay below the relay's 35 s send timeout. If
+  marking a sent row fails, the row stays PENDING and is sent again (consumers de-duplicate on `eventId`).
 - `outbox_send_failures_total{exception="<class>"}` says where to look: IAM policy or topic ACL for
   `TopicAuthorizationException`/`SaslAuthenticationException`, brokers, egress or a topic not yet created for
   `TimeoutException`/`NetworkException`/`UnknownTopicOrPartitionException`.

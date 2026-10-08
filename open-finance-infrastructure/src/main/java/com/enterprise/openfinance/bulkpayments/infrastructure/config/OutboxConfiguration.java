@@ -3,6 +3,7 @@ package com.enterprise.openfinance.bulkpayments.infrastructure.config;
 import com.enterprise.openfinance.bulkpayments.infrastructure.outbox.BulkFileEventEnvelopeFactory;
 import com.enterprise.openfinance.bulkpayments.infrastructure.outbox.OutboxEventJpaEntity;
 import com.enterprise.openfinance.bulkpayments.infrastructure.outbox.OutboxRelay;
+import com.enterprise.openfinance.bulkpayments.infrastructure.outbox.PostgresSessionRelayLock;
 import com.enterprise.openfinance.bulkpayments.infrastructure.outbox.SpringDataOutboxRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Gauge;
@@ -17,6 +18,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import javax.sql.DataSource;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -63,8 +65,9 @@ public class OutboxConfiguration {
     }
 
     /**
-     * The relay runs in every replica; the advisory lock lets only one of
-     * them publish at a time. Off by default until the topics exist on the
+     * The relay runs in every replica; a session-level advisory lock, held on
+     * its own pooled connection for each run, lets only one of them publish at
+     * a time, with no transaction open across the Kafka sends. Off by default until the topics exist on the
      * platform cluster (runbook step 4): events wait in the outbox.
      */
     @Configuration
@@ -76,12 +79,14 @@ public class OutboxConfiguration {
         OutboxRelay outboxRelay(SpringDataOutboxRepository outbox,
                                 KafkaTemplate<String, String> kafka,
                                 PlatformTransactionManager transactionManager,
+                                DataSource dataSource,
                                 Clock clock,
                                 @Value("${openfinance.bulkpayments.outbox.relay.batch-size:100}") int batchSize,
                                 @Value("${openfinance.bulkpayments.outbox.relay.send-timeout:PT35S}") Duration sendTimeout,
                                 @Value("${openfinance.bulkpayments.outbox.retention:P7D}") Duration retention,
                                 MeterRegistry registry) {
-            return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager), clock, batchSize,
+            return new OutboxRelay(outbox, kafka, new TransactionTemplate(transactionManager),
+                    new PostgresSessionRelayLock(dataSource, OutboxRelay.RELAY_LOCK_KEY), clock, batchSize,
                     sendTimeout, retention, registry);
         }
 
