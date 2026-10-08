@@ -467,6 +467,32 @@ class BulkOrchestrationServiceIT {
     }
 
     @Test
+    void aFileStopsWhenItsConsentIsRevokedBetweenBatches() throws Exception {
+        List<String> rows = new ArrayList<>();
+        for (int line = 1; line <= 700; line++) {
+            rows.add("INS-" + line + "," + IBAN + ",1.00");
+        }
+        String fileId = upload("IDEMP-REVOKED", csv(rows.toArray(String[]::new)), "PARTIAL_REJECTION");
+        assertThat(processor.processNextBatch()).isEqualTo(500);
+
+        when(consents.findById("CONS-IDEMP-REVOKED")).thenReturn(Optional.of(new BulkConsentContext(
+                "CONS-IDEMP-REVOKED", "TPP-001", java.util.Set.of("INITIATEBULKPAYMENTS"),
+                java.time.Instant.parse("2099-01-01T00:00:00Z"), false)));
+        assertThat(processor.processNextBatch()).isZero();
+
+        mvc.perform(asTpp(get("/open-finance/v1/file-payments/{id}", fileId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.Data.Status").value("Stopped"));
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_item where file_id = ?"
+                + " and processed_at is null", Integer.class, fileId)).isEqualTo(200);
+        JsonNode rejected = json.readTree(jdbc.queryForObject("select payload from " + SCHEMA + ".outbox_event"
+                + " where aggregate_id = ? and event_type = 'Payments.BulkFile.Rejected.v1'", String.class, fileId));
+        assertThat(rejected.at("/data/reason").asText()).isEqualTo("CONSENT_NOT_USABLE");
+        assertThat(rejected.at("/data/rejectedCount").asInt()).isEqualTo(700);
+        assertThat(processor.processNextBatch()).isZero();
+    }
+
+    @Test
     void twoProcessorsNeverClaimTheSameFile() throws Exception {
         String first = upload("IDEMP-CLAIM-1", csv("INS-1," + IBAN + ",1.00"), "PARTIAL_REJECTION");
         String second = upload("IDEMP-CLAIM-2", csv("INS-1," + IBAN + ",2.00"), "PARTIAL_REJECTION");

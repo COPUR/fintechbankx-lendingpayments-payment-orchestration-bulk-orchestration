@@ -137,6 +137,56 @@ class BulkPaymentServiceTest {
     }
 
     @Test
+    void theConsentIsReadAgainBeforeEachBatchAndAFileStopsWhenItIsNoLongerUsable() {
+        BulkPaymentService service = service(settings(2));
+        BulkFileProcessingService processor = processor(settings(2));
+        BulkUploadResult upload = service.submitFile(command("IDEMP-REVOKE", validCsv(
+                "INS-1," + IBAN + ",10.00", "INS-2," + IBAN + ",20.00", "INS-3," + IBAN + ",30.00"),
+                BulkIntegrityMode.PARTIAL_REJECTION));
+        String consentId = "CONS-IDEMP-REVOKE";
+
+        assertThat(processor.processNextBatch()).isEqualTo(2);
+        assertThat(consentPort.reads.get(consentId)).isEqualTo(2); // upload + first batch
+
+        // The PSU revokes the consent between batches: usable is now false.
+        consentPort.data.put(consentId, new BulkConsentContext(consentId, "TPP-001",
+                Set.of("INITIATEBULKPAYMENTS"), Instant.parse("2099-01-01T00:00:00Z"), false));
+        assertThat(processor.processNextBatch()).isZero();
+
+        BulkFile stopped = status(service, upload.fileId());
+        assertThat(stopped.status()).isEqualTo(BulkFileStatus.STOPPED);
+        assertThat(stopped.processedCount()).isEqualTo(2);
+        assertThat(itemPort.processed.get(upload.fileId())).containsExactlyInAnyOrder(1, 2);
+        assertThat(publisher.published).last().isInstanceOfSatisfying(BulkFileRejected.class,
+                event -> assertThat(event.reason()).isEqualTo(BulkFileRejected.Reason.CONSENT_NOT_USABLE));
+        assertThat(processor.processNextBatch()).isZero();
+        assertThat(consentPort.reads.get(consentId)).isEqualTo(3);
+    }
+
+    @Test
+    void aConsentThatDisappearedOrExpiredAlsoStopsTheFileButAnOutageDoesNot() {
+        BulkPaymentService service = service(settings(1));
+        BulkFileProcessingService processor = processor(settings(1));
+        String content = validCsv("INS-1," + IBAN + ",10.00", "INS-2," + IBAN + ",20.00");
+        BulkUploadResult gone = service.submitFile(command("IDEMP-GONE", content, BulkIntegrityMode.PARTIAL_REJECTION));
+
+        consentPort.failNextRead = true;
+        assertThatThrownBy(processor::processNextBatch).isInstanceOf(IllegalStateException.class);
+        assertThat(status(service, gone.fileId()).status()).isEqualTo(BulkFileStatus.PROCESSING);
+
+        consentPort.data.remove("CONS-IDEMP-GONE");
+        consentPort.missing.add("CONS-IDEMP-GONE");
+        assertThat(processor.processNextBatch()).isZero();
+        assertThat(status(service, gone.fileId()).status()).isEqualTo(BulkFileStatus.STOPPED);
+
+        BulkUploadResult expiring = service.submitFile(command("IDEMP-EXP", content, BulkIntegrityMode.PARTIAL_REJECTION));
+        consentPort.data.put("CONS-IDEMP-EXP", new BulkConsentContext("CONS-IDEMP-EXP", "TPP-001",
+                Set.of("INITIATEBULKPAYMENTS"), Instant.now(CLOCK), true));
+        assertThat(processor.processNextBatch()).isZero();
+        assertThat(status(service, expiring.fileId()).status()).isEqualTo(BulkFileStatus.STOPPED);
+    }
+
+    @Test
     void processesLargeFilesInBoundedBatches() {
         BulkPaymentService service = service(settings(2));
         BulkFileProcessingService processor = processor(settings(2));
@@ -425,11 +475,14 @@ class BulkPaymentServiceTest {
     }
 
     private BulkFileProcessingService processor(BulkSettings settings) {
-        return new BulkFileProcessingService(filePort, itemPort, publisher, settings, CLOCK);
+        return new BulkFileProcessingService(filePort, itemPort, consentPort, publisher, settings, CLOCK);
     }
 
     private static final class TestConsentPort implements BulkConsentPort {
         private final Map<String, BulkConsentContext> data = new ConcurrentHashMap<>();
+        private final Map<String, Integer> reads = new ConcurrentHashMap<>();
+        private final Set<String> missing = new HashSet<>();
+        private boolean failNextRead;
 
         private TestConsentPort() {
             data.put("CONS-BULK-001", new BulkConsentContext("CONS-BULK-001", "TPP-001", Set.of("INITIATEBULKPAYMENTS"),
@@ -438,6 +491,14 @@ class BulkPaymentServiceTest {
 
         @Override
         public Optional<BulkConsentContext> findById(String consentId) {
+            reads.merge(consentId, 1, Integer::sum);
+            if (failNextRead) {
+                failNextRead = false;
+                throw new IllegalStateException("consent service unavailable");
+            }
+            if (missing.contains(consentId)) {
+                return Optional.empty();
+            }
             if (consentId.startsWith("CONS-IDEMP-")) {
                 return Optional.of(data.computeIfAbsent(consentId, id -> new BulkConsentContext(id, "TPP-001",
                         Set.of("INITIATEBULKPAYMENTS"), Instant.parse("2099-01-01T00:00:00Z"), true)));

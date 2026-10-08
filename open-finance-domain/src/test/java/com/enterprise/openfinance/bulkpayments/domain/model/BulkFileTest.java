@@ -135,6 +135,47 @@ class BulkFileTest {
                 .hasMessageContaining("currency");
     }
 
+    @Test
+    void aFileWhoseConsentIsNoLongerUsableStopsAndIsPublishedAsRejected() {
+        BulkFile file = accept(parsed(3, 2, 1, "350.00", "300.00", BulkFileStatus.VALIDATED));
+        file.pullDomainEvents();
+        file.recordProcessedBatch(1, BATCH_1);
+        BulkFile stored = rehydrateAsStored(file, 1L);
+
+        stored.stopBecauseConsentIsNotUsable(BATCH_2);
+
+        assertThat(stored.status()).isEqualTo(BulkFileStatus.STOPPED);
+        assertThat(stored.status().apiValue()).isEqualTo("Stopped");
+        assertThat(stored.isTerminal()).isTrue();
+        assertThat(stored.isValidationFinished()).isFalse();
+        assertThat(stored.processedCount()).isEqualTo(1);
+        assertThat(stored.processedAt()).isEqualTo(BATCH_2);
+        assertThat(stored.pullDomainEvents()).singleElement().isInstanceOfSatisfying(BulkFileRejected.class, event -> {
+            assertThat(event.reason()).isEqualTo(BulkFileRejected.Reason.CONSENT_NOT_USABLE);
+            assertThat(event.totalCount()).isEqualTo(3);
+            // None of the items will be released any more.
+            assertThat(event.rejectedCount()).isEqualTo(3);
+            assertThat(event.aggregateVersion()).isEqualTo(2L);
+        });
+
+        BulkFile reloaded = rehydrateAsStored(stored, 2L);
+        assertThat(reloaded.status()).isEqualTo(BulkFileStatus.STOPPED);
+        assertThatThrownBy(() -> reloaded.stopBecauseConsentIsNotUsable(BATCH_2))
+                .isInstanceOf(BusinessRuleViolationException.class);
+        assertThatThrownBy(() -> reloaded.recordProcessedBatch(1, BATCH_2))
+                .isInstanceOf(BusinessRuleViolationException.class);
+    }
+
+    @Test
+    void anAllRejectedFileSaysWhyItWasRejected() {
+        BulkFile file = accept(parsed(1, 0, 1, "10.00", "0", BulkFileStatus.REJECTED));
+        file.pullDomainEvents();
+        file.recordProcessedBatch(1, BATCH_1);
+
+        assertThat(file.pullDomainEvents()).singleElement().isInstanceOfSatisfying(BulkFileRejected.class,
+                event -> assertThat(event.reason()).isEqualTo(BulkFileRejected.Reason.ALL_ITEMS_REJECTED));
+    }
+
     private static BulkFile accept(ParsedBulkFile parsed) {
         return BulkFile.accept("FILE-001", "CONS-BULK-001", "TPP-001", "IDEMP-001", "hash-1", "payroll.csv",
                 BulkIntegrityMode.PARTIAL_REJECTION, parsed, UPLOADED);

@@ -200,7 +200,7 @@ components:
               type: string
             Status:
               type: string
-              enum: [Processing, Validated, Rejected]
+              enum: [Processing, Validated, Rejected, Stopped]
             TotalCount:
               type: integer
             AcceptedCount:

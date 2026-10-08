@@ -62,7 +62,8 @@ public class BulkFileEventEnvelopeFactory {
                     "fileId", e.fileId(),
                     "totalCount", e.totalCount(),
                     "rejectedCount", e.rejectedCount(),
-                    "rejectedAt", e.occurredAt().toString()));
+                    "rejectedAt", e.occurredAt().toString(),
+                    "reason", e.reason().name()));
         };
     }
 

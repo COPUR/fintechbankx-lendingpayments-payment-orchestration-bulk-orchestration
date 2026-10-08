@@ -15,9 +15,11 @@ class BulkFileStatusTest {
 
     /** Until items reach initiation-settlement, a validated file is not complete and not final. */
     @Test
-    void onlyRejectedIsFinalAndNothingClaimsCompletion() {
+    void onlyRejectedAndStoppedAreFinalAndNothingClaimsCompletion() {
         assertThat(BulkFileStatus.values()).extracting(Enum::name)
-                .containsExactly("PROCESSING", "VALIDATED", "REJECTED");
+                .containsExactly("PROCESSING", "VALIDATED", "REJECTED", "STOPPED");
+        assertThat(BulkFileStatus.STOPPED.isValidationFinished()).isFalse();
+        assertThat(BulkFileStatus.STOPPED.isTerminal()).isTrue();
         assertThat(BulkFileStatus.PROCESSING.isValidationFinished()).isFalse();
         assertThat(BulkFileStatus.VALIDATED.isValidationFinished()).isTrue();
         assertThat(BulkFileStatus.REJECTED.isValidationFinished()).isTrue();

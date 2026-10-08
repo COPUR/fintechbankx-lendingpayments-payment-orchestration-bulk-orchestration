@@ -57,10 +57,12 @@ class BulkFileEventEnvelopeFactoryTest {
     @Test
     void rejectedEnvelope() throws Exception {
         OutboxEventJpaEntity rejected = factory.toOutboxRow(new BulkFileRejected(UUID.randomUUID(), "FILE-2", 1L, AT,
-                2, 2), "FILE-2");
+                2, 2, BulkFileRejected.Reason.CONSENT_NOT_USABLE), "FILE-2");
         assertThat(rejected.getTopic()).isEqualTo("evt.pay.bulk.rejected.v1");
         assertThat(rejected.getEventType()).isEqualTo("Payments.BulkFile.Rejected.v1");
         assertThat(json.readTree(rejected.getPayload()).get("data").get("rejectedCount").asInt()).isEqualTo(2);
+        assertThat(json.readTree(rejected.getPayload()).get("data").get("reason").asText())
+                .isEqualTo("CONSENT_NOT_USABLE");
     }
 
     /** Catalog rule: evt.<ctx>.<aggregate>.<event>.v<n> where <event> is the eventType's event, lower case. */
@@ -69,7 +71,8 @@ class BulkFileEventEnvelopeFactoryTest {
         List<OutboxEventJpaEntity> rows = List.of(
                 factory.toOutboxRow(new BulkFileAccepted(UUID.randomUUID(), "F", 0L, AT, "C", "T",
                         BulkIntegrityMode.FULL_REJECTION, 1, 1, 0, Money.of("1", "AED")), "F"),
-                factory.toOutboxRow(new BulkFileRejected(UUID.randomUUID(), "F", 1L, AT, 1, 1), "F"));
+                factory.toOutboxRow(new BulkFileRejected(UUID.randomUUID(), "F", 1L, AT, 1, 1,
+                        BulkFileRejected.Reason.ALL_ITEMS_REJECTED), "F"));
 
         for (OutboxEventJpaEntity row : rows) {
             String[] topic = row.getTopic().split("\\.");

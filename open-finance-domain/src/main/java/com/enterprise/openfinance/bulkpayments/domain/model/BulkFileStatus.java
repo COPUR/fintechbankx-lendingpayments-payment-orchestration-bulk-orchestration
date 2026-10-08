@@ -8,12 +8,15 @@ package com.enterprise.openfinance.bulkpayments.domain.model;
  *       items have not reached initiation-settlement (no hand-off exists yet), so the
  *       file is neither complete nor final;</li>
  *   <li>REJECTED: every item was rejected; final.</li>
+ *   <li>STOPPED: the consent stopped being usable (revoked, expired or gone) before every
+ *       item was released, so the remaining items are never released; final.</li>
  * </ul>
  */
 public enum BulkFileStatus {
     PROCESSING("Processing", false, false),
     VALIDATED("Validated", true, false),
-    REJECTED("Rejected", true, true);
+    REJECTED("Rejected", true, true),
+    STOPPED("Stopped", false, true);
 
     private final String apiValue;
     private final boolean validationFinished;

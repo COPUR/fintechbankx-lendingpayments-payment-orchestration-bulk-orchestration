@@ -47,12 +47,19 @@ class AsyncApiContractTest {
     }
 
     @Test
-    void rejectedEnvelopeMatchesTheSpec() throws Exception {
+    @SuppressWarnings("unchecked")
+    void rejectedEnvelopesMatchTheSpecForEveryReason() throws Exception {
         Map<String, Object> schemas = schemas();
-        JsonNode envelope = envelope(factory.toOutboxRow(
-                new BulkFileRejected(UUID.randomUUID(), "FILE-2", 1L, AT, 2, 2), "FILE-2"));
+        assertThat(required(schemas, "BulkFileRejectedData")).contains("reason");
+        List<String> reasons = (List<String>) ((Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>)
+                schemas.get("BulkFileRejectedData")).get("properties")).get("reason")).get("enum");
+        for (BulkFileRejected.Reason reason : BulkFileRejected.Reason.values()) {
+            JsonNode envelope = envelope(factory.toOutboxRow(
+                    new BulkFileRejected(UUID.randomUUID(), "FILE-2", 1L, AT, 2, 2, reason), "FILE-2"));
 
-        assertEnvelope(schemas, envelope, "BulkFileRejectedData");
+            assertEnvelope(schemas, envelope, "BulkFileRejectedData");
+            assertThat(reasons).contains(envelope.at("/data/reason").asText());
+        }
     }
 
     @SuppressWarnings("unchecked")

@@ -19,6 +19,7 @@ import java.util.UUID;
  *
  * <pre>
  * accept() ──▶ PROCESSING ──recordProcessedBatch()…──▶ VALIDATED | REJECTED
+ *                   └──stopBecauseConsentIsNotUsable()──▶ STOPPED
  * </pre>
  *
  * The validation outcome of each item is fixed at upload ({@code targetStatus});
@@ -118,6 +119,9 @@ public final class BulkFile {
         if (status.isValidationFinished() && processedAt == null) {
             throw new IllegalArgumentException("processedAt is required once validation is finished");
         }
+        if (status == BulkFileStatus.STOPPED && processedAt == null) {
+            throw new IllegalArgumentException("processedAt is required for a stopped file");
+        }
         if (version < 0) {
             throw new IllegalArgumentException("version must be >= 0");
         }
@@ -213,8 +217,26 @@ public final class BulkFile {
         processedAt = now;
         long nextVersion = version + 1;
         if (status == BulkFileStatus.REJECTED) {
-            domainEvents.add(new BulkFileRejected(UUID.randomUUID(), fileId, nextVersion, now, totalCount, rejectedCount));
+            domainEvents.add(new BulkFileRejected(UUID.randomUUID(), fileId, nextVersion, now, totalCount, rejectedCount,
+                    BulkFileRejected.Reason.ALL_ITEMS_REJECTED));
         }
+    }
+
+    /**
+     * The consent no longer authorises the file (revoked, expired, gone or out of scope):
+     * the remaining items are never released. Raises {@link BulkFileRejected} with reason
+     * CONSENT_NOT_USABLE and every item counted as rejected, so consumers of the earlier
+     * Accepted event drop the file.
+     */
+    public void stopBecauseConsentIsNotUsable(Instant now) {
+        Objects.requireNonNull(now, "now");
+        if (status != BulkFileStatus.PROCESSING) {
+            throw new BusinessRuleViolationException("Bulk file " + fileId + " is not processing");
+        }
+        status = BulkFileStatus.STOPPED;
+        processedAt = now;
+        domainEvents.add(new BulkFileRejected(UUID.randomUUID(), fileId, version + 1, now, totalCount, totalCount,
+                BulkFileRejected.Reason.CONSENT_NOT_USABLE));
     }
 
     /** Returns the events raised since the last call and forgets them. */
