@@ -3,6 +3,9 @@ package com.enterprise.openfinance.bulkpayments.domain.model;
 import java.time.Instant;
 import java.util.List;
 
+/**
+ * The report of a file: its counts and every item with its outcome.
+ */
 public record BulkFileReport(
         String fileId,
         BulkFileStatus status,
@@ -41,6 +44,31 @@ public record BulkFileReport(
 
         fileId = fileId.trim();
         items = List.copyOf(items);
+    }
+
+    /** Error message of the items of a STOPPED file that were accepted at validation. */
+    public static final String CONSENT_NOT_USABLE = "Consent not usable";
+
+    /**
+     * Builds the report of {@code file} from its stored items. A STOPPED file
+     * releases nothing: its Rejected event (reason CONSENT_NOT_USABLE) counts
+     * every item as rejected, so the report shows every item Rejected (accepted
+     * ones with {@link #CONSENT_NOT_USABLE}, rejected ones with their own
+     * reason) and AcceptedCount 0. Other files report their items as stored.
+     */
+    public static BulkFileReport of(BulkFile file, List<BulkItemResult> items, Instant generatedAt) {
+        if (file.status() != BulkFileStatus.STOPPED) {
+            return new BulkFileReport(file.fileId(), file.status(), file.totalCount(), file.acceptedCount(),
+                    file.rejectedCount(), items, generatedAt);
+        }
+        List<BulkItemResult> notReleased = items.stream()
+                .map(item -> item.status() == BulkItemStatus.ACCEPTED
+                        ? BulkItemResult.rejected(item.lineNumber(), item.instructionId(), item.payeeIban(),
+                        item.amount(), CONSENT_NOT_USABLE)
+                        : item)
+                .toList();
+        return new BulkFileReport(file.fileId(), file.status(), file.totalCount(), 0, file.totalCount(),
+                notReleased, generatedAt);
     }
 
     private static boolean isBlank(String value) {

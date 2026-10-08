@@ -158,8 +158,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
         BulkFile file = fileOptional.orElseThrow();
         ensureFileOwnership(file, query.tppId());
 
-        BulkFileReport report = new BulkFileReport(file.fileId(), file.status(), file.totalCount(),
-                file.acceptedCount(), file.rejectedCount(), itemPort.findByFileId(file.fileId()), now);
+        BulkFileReport report = BulkFileReport.of(file, itemPort.findByFileId(file.fileId()), now);
         if (file.isTerminal()) {
             // A terminal report never changes; a processing one would go stale.
             cachePort.putReport(cacheKey, report, now.plus(settings.cacheTtl()));

@@ -662,6 +662,17 @@ class BulkOrchestrationServiceIT {
                 .andExpect(jsonPath("$.Data.Status").value("Stopped"));
         assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_item where file_id = ?"
                 + " and processed_at is null", Integer.class, fileId)).isEqualTo(200);
+        // The report agrees with the Rejected event: nothing of a Stopped file is released.
+        JsonNode report = json.readTree(mvc.perform(asTpp(get("/open-finance/v1/file-payments/{id}/report", fileId)))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString());
+        assertThat(report.at("/Data/Status").asText()).isEqualTo("Stopped");
+        assertThat(report.at("/Data/AcceptedCount").asInt()).isZero();
+        assertThat(report.at("/Data/RejectedCount").asInt()).isEqualTo(700);
+        assertThat(report.at("/Data/Items")).hasSize(700).allSatisfy(item -> {
+            assertThat(item.at("/Status").asText()).isEqualTo("Rejected");
+            assertThat(item.at("/ErrorMessage").asText()).isEqualTo("Consent not usable");
+        });
         JsonNode rejected = json.readTree(jdbc.queryForObject("select payload from " + SCHEMA + ".outbox_event"
                 + " where aggregate_id = ? and event_type = 'Payments.BulkFile.Rejected.v1'", String.class, fileId));
         assertThat(rejected.at("/data/reason").asText()).isEqualTo("CONSENT_NOT_USABLE");
