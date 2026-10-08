@@ -58,7 +58,7 @@ Cross-repo prerequisites, in this order (each must be done before the next start
    - (b) ServiceEntry / egress for the datastores `[aurora-postgresql, msk]` under the REGISTRY_ONLY outbound
      policy (without it the DB readiness check fails and the relay cannot reach the brokers), and Aurora egress
      on 5432 in the mesh NetworkPolicy for every pod labelled
-     `app.kubernetes.io/name=payment-bulk-orchestration-service`: the API pods (`app.kubernetes.io/component=api`)
+     `app.kubernetes.io/name=payment-bulk-orchestration-service`: the API pods (`app.kubernetes.io/component=service`)
      **and** the Flyway pre-install/pre-upgrade hook pod (`app.kubernetes.io/component=db-migration`, no Istio
      sidecar). Without it the hook Job cannot reach Aurora and every install or upgrade stops before the pods
      roll;

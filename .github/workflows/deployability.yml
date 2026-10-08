@@ -96,16 +96,23 @@ jobs:
           grep -q "proxy.istio.io/config: '{\"terminationDrainDuration\": \"55s\"}'" <<<"$deployment"
           test "$(grep -oE 'terminationGracePeriodSeconds: [0-9]+' <<<"$deployment" | awk '{print $2}')" -gt 55
           test "$(grep -c 'fintechbankx.io/squad: payments' <<<"$rendered")" -ge 5
-          # Pod labels and selection: API and Job pods both carry app.kubernetes.io/name=<SA> (mesh Aurora
-          # egress); no selector matches the Job pod; only the API pods carry fintechbankx.io/service-id.
+          # Pod labels and selection (cicd-templates 335a345): API and Job pods both carry
+          # app.kubernetes.io/name=<SA> (mesh Aurora egress); every selector requires component=service, so none
+          # selects the db-migration Job pod; only the API pods carry fintechbankx.io/service-id.
           python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
-          helm template ci "$chart" --namespace payments $args --set networkPolicy.enabled=true \
-            | python3 scripts/ci/pod-selection.py "$sa" svc-pay-bulk-orchestration
-          # The check itself must catch a selector that would pick up the Job pod.
-          if helm template ci "$chart" --namespace payments $args \
-               | sed '/app.kubernetes.io\/component: api/d; /app.kubernetes.io\/component: db-migration/d' \
-               | python3 scripts/ci/pod-selection.py "$sa" svc-pay-bulk-orchestration 2>/dev/null; then
-            echo "pod-selection accepted selectors that match the migration Job pod" >&2; exit 1
+          python3 scripts/ci/helm-selector-check.py "$sa" svc-pay-bulk-orchestration <<<"$rendered"
+          helm template ci "$chart" --namespace payments -f "$chart/values-dev.yaml" $args \
+            | python3 scripts/ci/helm-selector-check.py "$sa" svc-pay-bulk-orchestration
+          helm template ci "$chart" --namespace payments --set networkPolicy.enabled=true $args \
+            | python3 scripts/ci/helm-selector-check.py "$sa" svc-pay-bulk-orchestration
+          # The check itself must catch selectors that would pick up the Job pod.
+          if sed '/app.kubernetes.io\/component: service/d; /app.kubernetes.io\/component: db-migration/d' <<<"$rendered" \
+               | python3 scripts/ci/helm-selector-check.py "$sa" svc-pay-bulk-orchestration 2>/dev/null; then
+            echo "helm-selector-check accepted selectors that match the migration Job pod" >&2; exit 1
+          fi
+          # Parked-outbox alerting is the platform's OutboxEventsParked rule; the chart ships none.
+          if grep -qE 'kind: PrometheusRule|outbox_parked' <<<"$rendered"; then
+            echo "the chart renders its own outbox alert rule; use the platform OutboxEventsParked" >&2; exit 1
           fi
           # A missing required value must fail the render.
           if helm template ci "$chart" --set image.repository=x --set image.tag=y \

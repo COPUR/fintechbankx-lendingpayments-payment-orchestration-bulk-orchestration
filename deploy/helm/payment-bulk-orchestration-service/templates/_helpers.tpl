@@ -6,13 +6,13 @@
 Every pod of the release, the API pods and the migration Job pod alike, carries
 app.kubernetes.io/name = the service account name: the mesh repo's
 NetworkPolicies grant Aurora egress (5432) by that label only. The component
-label keeps them apart: "api" for the Deployment, which every selector
+label keeps them apart (cicd-templates 335a345): "service" for the Deployment, which every selector
 (Deployment, Service, PDB, NetworkPolicy, topology spread; the HPA targets the
 Deployment) requires, "db-migration" for the hook Job.
 */ -}}
 {{- define "bulk.selectorLabels" -}}
 {{ include "bulk.instanceLabels" . }}
-app.kubernetes.io/component: api
+app.kubernetes.io/component: service
 {{- end -}}
 
 {{- define "bulk.instanceLabels" -}}
@@ -33,7 +33,7 @@ fintechbankx.io/squad: {{ required "squad is required (payments)" .Values.squad 
 {{- /* Labels of the API's objects. */ -}}
 {{- define "bulk.labels" -}}
 {{ include "bulk.commonLabels" . }}
-app.kubernetes.io/component: api
+app.kubernetes.io/component: service
 {{- end -}}
 
 {{- define "bulk.secretName" -}}
@@ -61,7 +61,7 @@ Usage: include "bulk.remoteKey" (list "externalSecret.remoteSecretName" .Values.
 {{- /*
 Labels of every ExternalSecret: the admission policy requires
 app.kubernetes.io/name = the service account name. Without a component: each
-ExternalSecret adds its own (api or db-migration).
+ExternalSecret adds its own (service or db-migration).
 */ -}}
 {{- define "bulk.externalSecretLabels" -}}
 {{- if ne (include "bulk.name" .) .Values.serviceAccount.name -}}

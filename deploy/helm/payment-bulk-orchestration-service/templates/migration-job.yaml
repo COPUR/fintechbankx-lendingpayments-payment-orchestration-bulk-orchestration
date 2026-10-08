@@ -55,7 +55,7 @@ spec:
       # app.kubernetes.io/name = the service account name, like the API pods:
       # the mesh repo's NetworkPolicies grant Aurora egress (5432) by that label.
       # Component db-migration keeps the pod out of every selector (they all
-      # require component api). No fintechbankx.io/service-id: platform
+      # require component service). No fintechbankx.io/service-id: platform
       # scraping and alerts key on it, and a hook pod is not the service.
       labels:
         {{- include "bulk.instanceLabels" . | nindent 8 }}
