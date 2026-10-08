@@ -1,5 +1,6 @@
 package com.enterprise.openfinance.bulkpayments.infrastructure.rest;
 
+import com.enterprise.openfinance.bulkpayments.domain.exception.ResourceNotFoundException;
 import com.enterprise.openfinance.bulkpayments.domain.port.in.command.SubmitBulkFileCommand;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFile;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileReport;
@@ -94,10 +95,7 @@ public class BulkPaymentsController {
 
         var file = useCase.getFileStatus(new GetBulkFileStatusQuery(fileId, tppId, interactionId));
         if (file.isEmpty()) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .cacheControl(CacheControl.maxAge(0, TimeUnit.SECONDS).noStore())
-                    .header("X-FAPI-Interaction-ID", interactionId)
-                    .build();
+            throw new ResourceNotFoundException(ResourceNotFoundException.BULK_FILE_NOT_FOUND);
         }
 
         BulkFileStatusResponse response = BulkFileStatusResponse.from(file.orElseThrow());
@@ -132,10 +130,7 @@ public class BulkPaymentsController {
 
         var report = useCase.getFileReport(new GetBulkFileReportQuery(fileId, tppId, interactionId));
         if (report.isEmpty()) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .cacheControl(CacheControl.maxAge(0, TimeUnit.SECONDS).noStore())
-                    .header("X-FAPI-Interaction-ID", interactionId)
-                    .build();
+            throw new ResourceNotFoundException(ResourceNotFoundException.BULK_FILE_NOT_FOUND);
         }
 
         BulkFileReportResponse response = BulkFileReportResponse.from(report.orElseThrow());

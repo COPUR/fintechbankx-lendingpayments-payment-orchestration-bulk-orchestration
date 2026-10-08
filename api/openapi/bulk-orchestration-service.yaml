@@ -2,7 +2,10 @@ openapi: 3.0.3
 info:
   title: Bulk Orchestration Service API
   version: 0.1.0
-  description: API for corporate bulk payment upload, execution and reporting.
+  description: >-
+    API for corporate bulk payment upload, execution and reporting.
+    A file id that does not exist and one that belongs to another TPP get the same answer: 404 NOT_FOUND
+    with the message "Bulk file not found" (ADR-025 item 5); 403 is not used for another TPP's file.
 servers:
   - url: https://api.example.com/open-finance/v1
 paths:
@@ -124,6 +127,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FilePaymentResponse'
+        '404':
+          description: >-
+            NOT_FOUND, message "Bulk file not found", for an unknown file id and for another TPP's file id
+            alike (ADR-025 item 5), so a TPP cannot probe for other TPPs' file ids.
   /file-payments/{filePaymentId}/report:
     get:
       summary: Get bulk execution report
@@ -144,6 +151,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BulkReportResponse'
+        '404':
+          description: >-
+            NOT_FOUND, message "Bulk file not found", for an unknown file id and for another TPP's file id
+            alike (ADR-025 item 5), so a TPP cannot probe for other TPPs' file ids.
 components:
   securitySchemes:
     dpopAuth:

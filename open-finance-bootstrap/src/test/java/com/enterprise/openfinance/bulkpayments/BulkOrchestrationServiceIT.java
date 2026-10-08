@@ -879,9 +879,17 @@ class BulkOrchestrationServiceIT {
                         .header("X-FAPI-Interaction-ID", "ix-1"))
                 .andExpect(status().isUnauthorized());
 
-        mvc.perform(asTpp(get("/open-finance/v1/file-payments/{id}", fileId), "tpp-999-token", TPP_999_KEY))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        // ADR-025 item 5 (adr-runbooks a7fe0c2): another TPP's file and an unknown file get the same 404.
+        for (String path : List.of("/open-finance/v1/file-payments/{id}", "/open-finance/v1/file-payments/{id}/report")) {
+            for (String id : List.of(fileId, "FILE-BULK-does-not-exist")) {
+                mvc.perform(asTpp(get(path, id), "tpp-999-token", TPP_999_KEY))
+                        .andExpect(status().isNotFound())
+                        .andExpect(header().string("X-FAPI-Interaction-ID", "ix-bulk-it"))
+                        .andExpect(header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")))
+                        .andExpect(jsonPath("$.code").value("NOT_FOUND"))
+                        .andExpect(jsonPath("$.message").value("Bulk file not found"));
+            }
+        }
 
         mvc.perform(asTpp(get("/open-finance/v1/file-payments/{id}", fileId)).header("x-fapi-financial-id", "TPP-999"))
                 .andExpect(status().isForbidden());

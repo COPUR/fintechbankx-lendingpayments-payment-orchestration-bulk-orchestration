@@ -34,8 +34,13 @@ public class BulkPaymentsExceptionHandler {
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<BulkErrorResponse> handleNotFound(ResourceNotFoundException exception,
                                                             HttpServletRequest request) {
-        return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(BulkErrorResponse.of("NOT_FOUND", exception.getMessage(), interactionId(request)));
+        String interactionId = interactionId(request);
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .cacheControl(org.springframework.http.CacheControl.noStore());
+        if (interactionId != null) {
+            response.header("X-FAPI-Interaction-ID", interactionId);
+        }
+        return response.body(BulkErrorResponse.of("NOT_FOUND", exception.getMessage(), interactionId));
     }
 
     @ExceptionHandler(IdempotencyConflictException.class)

@@ -132,11 +132,15 @@ class BulkPaymentsControllerUnitTest {
         Mockito.when(useCase.getFileStatus(Mockito.any())).thenReturn(Optional.empty());
         Mockito.when(useCase.getFileReport(Mockito.any())).thenReturn(Optional.empty());
 
-        ResponseEntity<BulkFileStatusResponse> status = controller.getFileStatus("DPoP token", "proof", "ix-1", "TPP-001", "FILE-404", null);
-        ResponseEntity<BulkFileReportResponse> report = controller.getFileReport("DPoP token", "proof", "ix-1", "TPP-001", "FILE-404", null);
-
-        assertThat(status.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
-        assertThat(report.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        // One fixed message for an unknown file and for another TPP's file (ADR-025 item 5).
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        controller.getFileStatus("DPoP token", "proof", "ix-1", "TPP-001", "FILE-404", null))
+                .isInstanceOf(com.enterprise.openfinance.bulkpayments.domain.exception.ResourceNotFoundException.class)
+                .hasMessage("Bulk file not found");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                        controller.getFileReport("DPoP token", "proof", "ix-1", "TPP-001", "FILE-404", null))
+                .isInstanceOf(com.enterprise.openfinance.bulkpayments.domain.exception.ResourceNotFoundException.class)
+                .hasMessage("Bulk file not found");
     }
 
     @Test

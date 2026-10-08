@@ -447,15 +447,17 @@ class BulkPaymentServiceTest {
     }
 
     @Test
-    void anotherTppCannotReadTheFileOrItsReport() {
+    /** ADR-025 item 5 (adr-runbooks a7fe0c2): another TPP's file id answers exactly like an unknown one. */
+    void anotherTppsFileIsIndistinguishableFromAnUnknownOne() {
         BulkPaymentService service = service(settings(2));
         BulkUploadResult upload = service.submitFile(command("IDEMP-450",
                 validCsv("INS-1," + IBAN + ",10.00"), BulkIntegrityMode.PARTIAL_REJECTION));
 
-        assertThatThrownBy(() -> service.getFileStatus(new GetBulkFileStatusQuery(upload.fileId(), "TPP-999", "ix-1")))
-                .isInstanceOf(ForbiddenException.class);
-        assertThatThrownBy(() -> service.getFileReport(new GetBulkFileReportQuery(upload.fileId(), "TPP-999", "ix-1")))
-                .isInstanceOf(ForbiddenException.class);
+        assertThat(service.getFileStatus(new GetBulkFileStatusQuery(upload.fileId(), "TPP-999", "ix-1"))).isEmpty();
+        assertThat(service.getFileReport(new GetBulkFileReportQuery(upload.fileId(), "TPP-999", "ix-1"))).isEmpty();
+        // The owner still reads both.
+        assertThat(service.getFileStatus(new GetBulkFileStatusQuery(upload.fileId(), "TPP-001", "ix-1"))).isPresent();
+        assertThat(service.getFileReport(new GetBulkFileReportQuery(upload.fileId(), "TPP-001", "ix-1"))).isPresent();
     }
 
     @Test

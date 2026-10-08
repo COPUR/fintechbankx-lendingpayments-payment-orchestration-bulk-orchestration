@@ -132,12 +132,11 @@ public class BulkPaymentService implements BulkPaymentUseCase {
                 file.acceptedCount(), file.rejectedCount(), file.createdAt());
     }
 
+    /** Another TPP's file is empty, like an unknown one (ADR-025 item 5): the same 404, no 403. */
     @Override
     @Transactional(readOnly = true)
     public Optional<BulkFile> getFileStatus(GetBulkFileStatusQuery query) {
-        Optional<BulkFile> file = filePort.findById(query.fileId());
-        file.ifPresent(found -> ensureFileOwnership(found, query.tppId()));
-        return file;
+        return filePort.findById(query.fileId()).filter(file -> file.belongsToTpp(query.tppId()));
     }
 
     @Override
@@ -151,12 +150,12 @@ public class BulkPaymentService implements BulkPaymentUseCase {
             return cached;
         }
 
-        Optional<BulkFile> fileOptional = filePort.findById(query.fileId());
+        Optional<BulkFile> fileOptional = filePort.findById(query.fileId())
+                .filter(found -> found.belongsToTpp(query.tppId()));
         if (fileOptional.isEmpty()) {
             return Optional.empty();
         }
         BulkFile file = fileOptional.orElseThrow();
-        ensureFileOwnership(file, query.tppId());
 
         BulkFileReport report = BulkFileReport.of(file, itemPort.findByFileId(file.fileId()), now);
         if (file.isTerminal()) {
@@ -194,11 +193,5 @@ public class BulkPaymentService implements BulkPaymentUseCase {
 
     private static String reportCacheKey(String fileId, String tppId) {
         return "report:" + fileId + ':' + tppId;
-    }
-
-    private static void ensureFileOwnership(BulkFile file, String tppId) {
-        if (!file.belongsToTpp(tppId)) {
-            throw new ForbiddenException("Consent participant mismatch");
-        }
     }
 }
