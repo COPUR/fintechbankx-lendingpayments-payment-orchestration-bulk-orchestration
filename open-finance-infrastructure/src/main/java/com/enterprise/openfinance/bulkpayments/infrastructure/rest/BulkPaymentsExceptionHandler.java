@@ -1,6 +1,7 @@
 package com.enterprise.openfinance.bulkpayments.infrastructure.rest;
 
 import com.enterprise.openfinance.bulkpayments.domain.exception.BusinessRuleViolationException;
+import com.enterprise.openfinance.bulkpayments.domain.exception.ConsentAlreadyUsedException;
 import com.enterprise.openfinance.bulkpayments.domain.exception.ForbiddenException;
 import com.enterprise.openfinance.bulkpayments.domain.exception.IdempotencyConflictException;
 import com.enterprise.openfinance.bulkpayments.domain.exception.ResourceNotFoundException;
@@ -42,6 +43,13 @@ public class BulkPaymentsExceptionHandler {
                                                             HttpServletRequest request) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(BulkErrorResponse.of("CONFLICT", exception.getMessage(), interactionId(request)));
+    }
+
+    @ExceptionHandler(ConsentAlreadyUsedException.class)
+    public ResponseEntity<BulkErrorResponse> handleConsentAlreadyUsed(ConsentAlreadyUsedException exception,
+                                                                      HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(BulkErrorResponse.of("CONSENT_ALREADY_USED", exception.getMessage(), interactionId(request)));
     }
 
     @ExceptionHandler(BusinessRuleViolationException.class)

@@ -5,9 +5,11 @@ import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileAccepted;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileEvent;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileRejected;
 import com.enterprise.openfinance.bulkpayments.domain.exception.BusinessRuleViolationException;
+import com.enterprise.openfinance.bulkpayments.domain.exception.ConsentAlreadyUsedException;
 import com.enterprise.openfinance.bulkpayments.domain.exception.ForbiddenException;
 import com.enterprise.openfinance.bulkpayments.domain.exception.IdempotencyConflictException;
 import com.enterprise.openfinance.bulkpayments.domain.exception.ResourceNotFoundException;
+import com.enterprise.openfinance.bulkpayments.domain.model.BulkConsentBinding;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkConsentContext;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFile;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileReport;
@@ -20,6 +22,7 @@ import com.enterprise.openfinance.bulkpayments.domain.model.BulkItemStatus;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkSettings;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkUploadResult;
 import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkCachePort;
+import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkConsentBindingPort;
 import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkConsentPort;
 import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkFileEventPort;
 import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkFilePort;
@@ -63,6 +66,7 @@ class BulkPaymentServiceTest {
     private final TestItemPort itemPort = new TestItemPort();
     private final TestIdempotencyPort idempotencyPort = new TestIdempotencyPort();
     private final TestCachePort cachePort = new TestCachePort();
+    private final TestBindingPort bindingPort = new TestBindingPort();
     private final RecordingPublisher publisher = new RecordingPublisher();
 
     @Test
@@ -96,6 +100,40 @@ class BulkPaymentServiceTest {
         assertThat(report.rejectedCount()).isZero();
         // No hand-off to initiation-settlement exists yet, so no completion is published.
         assertThat(publisher.published).singleElement().isInstanceOf(BulkFileAccepted.class);
+    }
+
+    @Test
+    void aConsentAuthorisesOneFileAndRecordsWhatItAuthorised() {
+        BulkPaymentService service = service(settings(10));
+        consentPort.data.put("CONS-SHARED", new BulkConsentContext("CONS-SHARED", "TPP-001", Set.of("bulk-payment"),
+                Instant.parse("2099-01-01T00:00:00Z"), true));
+        String first = validCsv("INS-1," + IBAN + ",10.00", "INS-2,AE000,5.50");
+        String second = validCsv("INS-9," + IBAN + ",99.00");
+
+        BulkUploadResult upload = service.submitFile(
+                command("CONS-SHARED", "IDEMP-B1", first, BulkIntegrityMode.PARTIAL_REJECTION, "AED"));
+
+        assertThat(bindingPort.findByConsentId("CONS-SHARED")).hasValueSatisfying(binding -> {
+            assertThat(binding.fileId()).isEqualTo(upload.fileId());
+            assertThat(binding.tppId()).isEqualTo("TPP-001");
+            assertThat(binding.fileHash()).isEqualTo(sha256(first));
+            assertThat(binding.itemCount()).isEqualTo(2);
+            assertThat(binding.controlSum()).isEqualTo(Money.of("15.50", "AED"));
+            assertThat(binding.boundAt()).isEqualTo(Instant.now(CLOCK));
+        });
+
+        assertThatThrownBy(() -> service.submitFile(
+                command("CONS-SHARED", "IDEMP-B2", second, BulkIntegrityMode.PARTIAL_REJECTION, "AED")))
+                .isInstanceOf(ConsentAlreadyUsedException.class)
+                .hasMessage("Consent already used for another file");
+        assertThat(filePort.data).hasSize(1);
+        assertThat(publisher.published).hasSize(1);
+
+        // A replay of the first upload is still answered from idempotency, not refused.
+        BulkUploadResult replay = service.submitFile(
+                command("CONS-SHARED", "IDEMP-B1", first, BulkIntegrityMode.PARTIAL_REJECTION, "AED"));
+        assertThat(replay.idempotencyReplay()).isTrue();
+        assertThat(replay.fileId()).isEqualTo(upload.fileId());
     }
 
     @Test
@@ -350,7 +388,13 @@ class BulkPaymentServiceTest {
 
     private static SubmitBulkFileCommand command(String idempotencyKey, String content, BulkIntegrityMode mode,
                                                  String currency) {
-        return new SubmitBulkFileCommand("TPP-001", "CONS-BULK-001", idempotencyKey, "payroll.csv", content,
+        return command("CONS-" + idempotencyKey, idempotencyKey, content, mode, currency);
+    }
+
+    /** One consent per key by default: a bulk consent authorises a single file. */
+    private static SubmitBulkFileCommand command(String consentId, String idempotencyKey, String content,
+                                                 BulkIntegrityMode mode, String currency) {
+        return new SubmitBulkFileCommand("TPP-001", consentId, idempotencyKey, "payroll.csv", content,
                 sha256(content), currency, mode, "ix-1");
     }
 
@@ -376,8 +420,8 @@ class BulkPaymentServiceTest {
     }
 
     private BulkPaymentService service(BulkSettings settings) {
-        return new BulkPaymentService(consentPort, filePort, itemPort, idempotencyPort, cachePort, publisher,
-                settings, CLOCK);
+        return new BulkPaymentService(consentPort, bindingPort, filePort, itemPort, idempotencyPort, cachePort,
+                publisher, settings, CLOCK);
     }
 
     private BulkFileProcessingService processor(BulkSettings settings) {
@@ -394,6 +438,10 @@ class BulkPaymentServiceTest {
 
         @Override
         public Optional<BulkConsentContext> findById(String consentId) {
+            if (consentId.startsWith("CONS-IDEMP-")) {
+                return Optional.of(data.computeIfAbsent(consentId, id -> new BulkConsentContext(id, "TPP-001",
+                        Set.of("bulk-payment"), Instant.parse("2099-01-01T00:00:00Z"), true)));
+            }
             return Optional.ofNullable(data.get(consentId));
         }
     }
@@ -491,6 +539,20 @@ class BulkPaymentServiceTest {
             }
             records.put(key, record);
             return true;
+        }
+    }
+
+    private static final class TestBindingPort implements BulkConsentBindingPort {
+        private final Map<String, BulkConsentBinding> bindings = new ConcurrentHashMap<>();
+
+        @Override
+        public boolean bind(BulkConsentBinding binding) {
+            return bindings.putIfAbsent(binding.consentId(), binding) == null;
+        }
+
+        @Override
+        public Optional<BulkConsentBinding> findByConsentId(String consentId) {
+            return Optional.ofNullable(bindings.get(consentId));
         }
     }
 

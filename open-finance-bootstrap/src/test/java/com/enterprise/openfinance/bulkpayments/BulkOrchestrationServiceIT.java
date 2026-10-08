@@ -1,11 +1,14 @@
 package com.enterprise.openfinance.bulkpayments;
 
 import com.enterprise.openfinance.bulkpayments.domain.port.in.command.SubmitBulkFileCommand;
+import com.enterprise.openfinance.bulkpayments.domain.exception.ConsentAlreadyUsedException;
+import com.enterprise.openfinance.bulkpayments.domain.model.BulkConsentContext;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkIntegrityMode;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkUploadResult;
 import com.enterprise.openfinance.bulkpayments.domain.model.Money;
 import com.enterprise.openfinance.bulkpayments.domain.port.in.BulkPaymentUseCase;
 import com.enterprise.openfinance.bulkpayments.domain.port.in.ProcessBulkFilesUseCase;
+import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkConsentPort;
 import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkFilePort;
 import com.enterprise.openfinance.bulkpayments.infrastructure.outbox.OutboxRelay;
 import com.enterprise.openfinance.bulkpayments.infrastructure.outbox.SpringDataOutboxRepository;
@@ -72,8 +75,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Boots the whole service against PostgreSQL: Flyway builds
  * sc_pay_bulk_orchestration, Hibernate validates the entities, and files go
  * through upload, bounded-batch processing and reporting over HTTP with
- * their events landing in the outbox and then on (a mocked) Kafka. Consents
- * come from the in-memory adapter (CONS-BULK-001 belongs to TPP-001).
+ * their events landing in the outbox and then on (a mocked) Kafka. The consent
+ * port is stubbed: every consent id is a usable bulk consent of TPP-001, and a
+ * consent authorises one file, so each upload helper call uses its own consent.
  *
  * Scenarios ported from the seed's uncompiled integrationTest and
  * functionalTest source sets (BulkPaymentsApiIntegrationTest, BulkPaymentsUatTest).
@@ -114,6 +118,13 @@ class BulkOrchestrationServiceIT {
     @MockBean KafkaTemplate<String, String> kafka;
     /** Signature and aud checks are unit-tested in JwtValidationTest; here tokens map to fixed claims. */
     @MockBean JwtDecoder jwtDecoder;
+    @MockBean BulkConsentPort consents;
+
+    @BeforeEach
+    void stubConsents() {
+        when(consents.findById(any())).thenAnswer(call -> Optional.of(new BulkConsentContext(call.getArgument(0),
+                "TPP-001", java.util.Set.of("bulk-payment"), java.time.Instant.parse("2099-01-01T00:00:00Z"), true)));
+    }
 
     @BeforeEach
     void stubTokens() {
@@ -139,6 +150,7 @@ class BulkOrchestrationServiceIT {
         jdbc.update("delete from " + SCHEMA + ".dpop_proof_jti");
         jdbc.update("delete from " + SCHEMA + ".outbox_event");
         jdbc.update("delete from " + SCHEMA + ".bulk_idempotency");
+        jdbc.update("delete from " + SCHEMA + ".bulk_consent_binding");
         jdbc.update("delete from " + SCHEMA + ".bulk_item");
         jdbc.update("delete from " + SCHEMA + ".bulk_file");
     }
@@ -151,7 +163,8 @@ class BulkOrchestrationServiceIT {
                 order by table_name
                 """, String.class);
 
-        assertThat(tables).containsExactly("bulk_file", "bulk_idempotency", "bulk_item", "dpop_proof_jti", "outbox_event");
+        assertThat(tables).containsExactly("bulk_consent_binding", "bulk_file", "bulk_idempotency", "bulk_item",
+                "dpop_proof_jti", "outbox_event");
     }
 
     @Test
@@ -369,6 +382,91 @@ class BulkOrchestrationServiceIT {
     }
 
     @Test
+    void aConsentAuthorisesOneFileAndTheBindingRecordsIt() throws Exception {
+        String first = csv("INS-1," + IBAN + ",10.00", "INS-2,AE000,2.50");
+        String fileId = json.readTree(mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-BIND-1")
+                        .contentType("application/json")
+                        .content(body("CONS-ONCE", "first.csv", first, sha256(first), "PARTIAL_REJECTION")))
+                .andExpect(status().isAccepted())
+                .andReturn().getResponse().getContentAsString()).at("/Data/FilePaymentId").asText();
+
+        String second = csv("INS-9," + IBAN + ",99.00");
+        mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-BIND-2")
+                        .contentType("application/json")
+                        .content(body("CONS-ONCE", "second.csv", second, sha256(second), "PARTIAL_REJECTION")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONSENT_ALREADY_USED"))
+                .andExpect(jsonPath("$.message").value("Consent already used for another file"));
+
+        // The replay of the first upload is still answered.
+        mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-BIND-1")
+                        .contentType("application/json")
+                        .content(body("CONS-ONCE", "first.csv", first, sha256(first), "PARTIAL_REJECTION")))
+                .andExpect(status().isAccepted())
+                .andExpect(header().string("X-OF-Idempotency", "HIT"));
+
+        var binding = jdbc.queryForMap("select * from " + SCHEMA + ".bulk_consent_binding where consent_id = ?",
+                "CONS-ONCE");
+        assertThat(binding.get("file_id")).isEqualTo(fileId);
+        assertThat(binding.get("tpp_id")).isEqualTo("TPP-001");
+        assertThat(binding.get("file_hash")).isEqualTo(sha256(first));
+        assertThat(binding.get("item_count")).isEqualTo(2);
+        assertThat((java.math.BigDecimal) binding.get("control_sum")).isEqualByComparingTo("12.50");
+        assertThat(binding.get("currency")).isEqualTo("AED");
+        assertThat(binding.get("bound_at")).isNotNull();
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_file", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_idempotency", Integer.class))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void concurrentFilesOnOneConsentBindOnlyOne() throws Exception {
+        int uploads = 4;
+        ExecutorService pool = Executors.newFixedThreadPool(uploads);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<BulkUploadResult>> results = new ArrayList<>();
+        try {
+            for (int i = 0; i < uploads; i++) {
+                String content = csv("INS-" + i + "," + IBAN + "," + (i + 1) + ".00");
+                SubmitBulkFileCommand command = new SubmitBulkFileCommand("TPP-001", "CONS-RACE", "IDEMP-CRACE-" + i,
+                        "file-" + i + ".csv", content, sha256(content), "AED", BulkIntegrityMode.PARTIAL_REJECTION,
+                        "ix-crace");
+                results.add(pool.submit(() -> {
+                    start.await();
+                    return bulkPayments.submitFile(command);
+                }));
+            }
+            start.countDown();
+            int bound = 0;
+            int refused = 0;
+            for (Future<BulkUploadResult> result : results) {
+                try {
+                    result.get(30, TimeUnit.SECONDS);
+                    bound++;
+                } catch (java.util.concurrent.ExecutionException e) {
+                    assertThat(e.getCause()).isInstanceOf(ConsentAlreadyUsedException.class);
+                    refused++;
+                }
+            }
+            assertThat(bound).isEqualTo(1);
+            assertThat(refused).isEqualTo(uploads - 1);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_file", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_consent_binding", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_idempotency", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".outbox_event", Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select b.file_id = f.file_id from " + SCHEMA + ".bulk_consent_binding b join "
+                + SCHEMA + ".bulk_file f on f.consent_id = b.consent_id", Boolean.class)).isTrue();
+    }
+
+    @Test
     void twoProcessorsNeverClaimTheSameFile() throws Exception {
         String first = upload("IDEMP-CLAIM-1", csv("INS-1," + IBAN + ",1.00"), "PARTIAL_REJECTION");
         String second = upload("IDEMP-CLAIM-2", csv("INS-1," + IBAN + ",2.00"), "PARTIAL_REJECTION");
@@ -535,7 +633,7 @@ class BulkOrchestrationServiceIT {
         MvcResult result = mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
                         .header("x-idempotency-key", idempotencyKey)
                         .contentType("application/json")
-                        .content(body("CONS-BULK-001", "file.csv", content, sha256(content), mode)))
+                        .content(body("CONS-" + idempotencyKey, "file.csv", content, sha256(content), mode)))
                 .andExpect(status().isAccepted())
                 .andReturn();
         return json.readTree(result.getResponse().getContentAsString()).at("/Data/FilePaymentId").asText();

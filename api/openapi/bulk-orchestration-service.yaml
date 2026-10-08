@@ -91,6 +91,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FilePaymentResponse'
+        '400':
+          description: Invalid file, hash, Currency or an amount finer than the currency's minor units.
+        '409':
+          description: >-
+            CONSENT_ALREADY_USED when the consent already authorised another file (a bulk consent
+            authorises one file), or CONFLICT when the idempotency key was used with another body.
   /file-payments/{filePaymentId}:
     get:
       summary: Get bulk payment status

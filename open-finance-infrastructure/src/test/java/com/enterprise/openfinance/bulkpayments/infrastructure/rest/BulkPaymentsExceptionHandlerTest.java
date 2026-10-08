@@ -2,6 +2,7 @@ package com.enterprise.openfinance.bulkpayments.infrastructure.rest;
 
 import com.enterprise.openfinance.bulkpayments.domain.exception.BusinessRuleViolationException;
 import com.enterprise.openfinance.bulkpayments.domain.exception.ForbiddenException;
+import com.enterprise.openfinance.bulkpayments.domain.exception.ConsentAlreadyUsedException;
 import com.enterprise.openfinance.bulkpayments.domain.exception.IdempotencyConflictException;
 import com.enterprise.openfinance.bulkpayments.domain.exception.ResourceNotFoundException;
 import com.enterprise.openfinance.bulkpayments.infrastructure.rest.dto.BulkErrorResponse;
@@ -33,6 +34,16 @@ class BulkPaymentsExceptionHandlerTest {
         assertThat(forbidden.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
         assertThat(notFound.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(conflict.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
+    void aSecondFileOnABoundConsentIsConsentAlreadyUsed() {
+        ResponseEntity<BulkErrorResponse> response = new BulkPaymentsExceptionHandler().handleConsentAlreadyUsed(
+                new ConsentAlreadyUsedException("Consent already used for another file"), request());
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+        assertThat(response.getBody().code()).isEqualTo("CONSENT_ALREADY_USED");
+        assertThat(response.getBody().message()).isEqualTo("Consent already used for another file");
     }
 
     @Test

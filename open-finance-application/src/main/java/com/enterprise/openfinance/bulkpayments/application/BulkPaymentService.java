@@ -1,9 +1,11 @@
 package com.enterprise.openfinance.bulkpayments.application;
 
 import com.enterprise.openfinance.bulkpayments.domain.port.in.command.SubmitBulkFileCommand;
+import com.enterprise.openfinance.bulkpayments.domain.exception.ConsentAlreadyUsedException;
 import com.enterprise.openfinance.bulkpayments.domain.exception.ForbiddenException;
 import com.enterprise.openfinance.bulkpayments.domain.exception.IdempotencyConflictException;
 import com.enterprise.openfinance.bulkpayments.domain.exception.ResourceNotFoundException;
+import com.enterprise.openfinance.bulkpayments.domain.model.BulkConsentBinding;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkConsentContext;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFile;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileReport;
@@ -13,6 +15,7 @@ import com.enterprise.openfinance.bulkpayments.domain.model.BulkUploadResult;
 import com.enterprise.openfinance.bulkpayments.domain.model.ParsedBulkFile;
 import com.enterprise.openfinance.bulkpayments.domain.port.in.BulkPaymentUseCase;
 import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkCachePort;
+import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkConsentBindingPort;
 import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkConsentPort;
 import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkFileEventPort;
 import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkFilePort;
@@ -31,7 +34,11 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Upload, status and report use cases. Rules live in {@link BulkFileParser}
+ * Upload, status and report use cases. A consent authorises one file: the upload
+ * binds it after the idempotency reservation, so a replay of the same upload is
+ * still answered while a second file on the consent is refused.
+ *
+ * Rules live in {@link BulkFileParser}
  * and {@link BulkFile}; this class loads, calls the domain, saves and
  * publishes the aggregate's events in one transaction.
  */
@@ -42,6 +49,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
     static final String REQUIRED_SCOPE = "bulk-payment";
 
     private final BulkConsentPort consentPort;
+    private final BulkConsentBindingPort bindingPort;
     private final BulkFilePort filePort;
     private final BulkItemPort itemPort;
     private final BulkIdempotencyPort idempotencyPort;
@@ -51,6 +59,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
     private final Clock clock;
 
     public BulkPaymentService(BulkConsentPort consentPort,
+                              BulkConsentBindingPort bindingPort,
                               BulkFilePort filePort,
                               BulkItemPort itemPort,
                               BulkIdempotencyPort idempotencyPort,
@@ -59,6 +68,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
                               BulkSettings settings,
                               Clock clock) {
         this.consentPort = consentPort;
+        this.bindingPort = bindingPort;
         this.filePort = filePort;
         this.itemPort = itemPort;
         this.idempotencyPort = idempotencyPort;
@@ -94,6 +104,11 @@ public class BulkPaymentService implements BulkPaymentUseCase {
             // A concurrent upload with the same key committed first: answer as its replay.
             return lookupIdempotentReplay(command, now)
                     .orElseThrow(() -> new IdempotencyConflictException("Idempotency conflict"));
+        }
+
+        if (!bindingPort.bind(BulkConsentBinding.of(file, command.fileHash(), now))) {
+            // Throwing rolls back the idempotency reservation too: nothing of this upload is kept.
+            throw new ConsentAlreadyUsedException("Consent already used for another file");
         }
 
         filePort.save(file);
