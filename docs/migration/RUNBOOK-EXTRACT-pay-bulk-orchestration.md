@@ -112,16 +112,17 @@ not go ahead.
 | 2 | Contracts merged (OpenAPI, AsyncAPI catalog PR #13) | Bulk squad, contracts | Contract tests green (`OpenApiContractTest`, `AsyncApiContractTest`, `ConsentServiceViewContractTest`) | Contract mismatch |
 | 3 | Cross-repo prerequisites 1 to 4 (section 2), in order | Consent owner, identity, mesh, platform | Each one confirmed in its own repo / ticket | Any prerequisite missing |
 | 4 | Deploy with `helm upgrade --install payment-bulk-orchestration-service deploy/helm/payment-bulk-orchestration-service -n payments -f values-<env>.yaml`; Flyway runs as the schema owner in the pre-install hook Job before the pods start | Bulk squad | Job succeeded; `flyway_schema_history` at V11; pods ready as `payment_bulk_app` | Pods not ready, migration Job failed (it stays for inspection; fix and re-run the upgrade) |
-| 5 | Relay stays off (`OUTBOX_RELAY_ENABLED=false`) until the platform has created `evt.pay.bulk.accepted.v1` and `evt.pay.bulk.rejected.v1` (the service never creates topics); then enable it | Bulk squad, platform | `outbox_pending_events` drains; `outbox_send_failures_total` flat | any increase of `outbox_parked_events_total` |
+| 5 | Relay stays off (`OUTBOX_RELAY_ENABLED=false`) until the platform has created `evt.pay.bulk.accepted.v1` and `evt.pay.bulk.rejected.v1` (the service never creates topics); then enable it | Bulk squad, platform | `outbox_pending_events` drains; `outbox_send_failures_total` flat | platform alert `OutboxEventsParked` fires |
 | 6 | Smoke upload through the gateway with a test TPP (DPoP token, `INITIATEBULKPAYMENTS` consent, `Currency`) | Bulk squad | 202, then `Validated`, report figures equal the file; Accepted event on Kafka | Any 5xx, 401 on a valid proof, 503 from the consent check |
 | 7 | Freeze uploads on the monolith and drain it: wait until every monolith file is terminal or past its poll window | Bulk squad | No monolith file in a non-terminal state still being polled | Drain does not finish in the window |
 | 8 | Switch the gateway route `/open-finance/v1/file-payments/**` to this service | Mesh team | Smoke repeated; SLO checks below | See rollback triggers below |
 
-Rollback triggers after step 8 (any one, sustained for 5 minutes):
+Rollback triggers after step 8 (any one; the rates sustained for 5 minutes):
 - HTTP 5xx above 1 % of requests;
 - 503 `CONSENT_SERVICE_UNAVAILABLE` above 0.5 % of uploads;
 - 401 `invalid_dpop_proof` above 5 % of requests (likely a gateway header or `htu` problem);
-- any increase of `outbox_parked_events_total` (a row parked, by the relay or by an operator).
+- the platform alert `OutboxEventsParked` (any increase of `outbox_parked_events_total` over 15 minutes, severity
+  warning, routed by squad): a row was parked, by the relay or by an operator.
 
 ## 4. Observability Gate
 
@@ -132,7 +133,8 @@ Rollback triggers after step 8 (any one, sustained for 5 minutes):
    `outbox_pending_events`, `outbox_oldest_pending_age_seconds`, `outbox_parked_rows` (rows parked now),
    `outbox_parked_events_total{exception}` (every park; `exception="OperatorPark"` for a park done with the SQL below),
    `outbox_send_failures_total{exception}`.
-4. Alerts in place before step 8: the four rollback triggers above, plus `outbox_oldest_pending_age_seconds`
+4. Alerts in place before step 8: the rollback triggers above (`OutboxEventsParked` is a platform rule; this
+   chart ships no parked alert rule), plus `outbox_oldest_pending_age_seconds`
    above 300 s (pages the owner squad) and any increase of `outbox_send_failures_total`.
 
 ### Relay failure policy
