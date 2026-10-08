@@ -120,10 +120,18 @@ class BulkOrchestrationServiceIT {
     @MockBean JwtDecoder jwtDecoder;
     @MockBean BulkConsentPort consents;
 
+    /** Whether a database transaction was active at each consent read. */
+    private final List<Boolean> transactionActiveAtConsentRead = new java.util.concurrent.CopyOnWriteArrayList<>();
+
     @BeforeEach
     void stubConsents() {
-        when(consents.findById(any())).thenAnswer(call -> Optional.of(new BulkConsentContext(call.getArgument(0),
-                "TPP-001", java.util.Set.of("INITIATEBULKPAYMENTS"), java.time.Instant.parse("2099-01-01T00:00:00Z"), true)));
+        transactionActiveAtConsentRead.clear();
+        when(consents.findById(any())).thenAnswer(call -> {
+            transactionActiveAtConsentRead.add(org.springframework.transaction.support.TransactionSynchronizationManager
+                    .isActualTransactionActive());
+            return Optional.of(new BulkConsentContext(call.getArgument(0),
+                "TPP-001", java.util.Set.of("INITIATEBULKPAYMENTS"), java.time.Instant.parse("2099-01-01T00:00:00Z"), true));
+        });
     }
 
     @BeforeEach
@@ -340,6 +348,13 @@ class BulkOrchestrationServiceIT {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Schema Validation Failed"));
         assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_file", Integer.class)).isZero();
+    }
+
+    @Test
+    void noDatabaseTransactionIsOpenWhileTheConsentServiceIsCalledAtUpload() throws Exception {
+        upload("IDEMP-NO-TX", csv("INS-1," + IBAN + ",10.00"), "PARTIAL_REJECTION");
+
+        assertThat(transactionActiveAtConsentRead).containsExactly(false);
     }
 
     @Test

@@ -31,6 +31,10 @@ import com.enterprise.openfinance.bulkpayments.domain.port.out.BulkItemPort;
 import com.enterprise.openfinance.bulkpayments.domain.port.in.query.GetBulkFileReportQuery;
 import com.enterprise.openfinance.bulkpayments.domain.port.in.query.GetBulkFileStatusQuery;
 import org.junit.jupiter.api.Tag;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionOperations;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -67,6 +71,7 @@ class BulkPaymentServiceTest {
     private final TestIdempotencyPort idempotencyPort = new TestIdempotencyPort();
     private final TestCachePort cachePort = new TestCachePort();
     private final TestBindingPort bindingPort = new TestBindingPort();
+    private final RecordingTransactions transactions = new RecordingTransactions();
     private final RecordingPublisher publisher = new RecordingPublisher();
 
     @Test
@@ -184,6 +189,33 @@ class BulkPaymentServiceTest {
                 Set.of("INITIATEBULKPAYMENTS"), Instant.now(CLOCK), true));
         assertThat(processor.processNextBatch()).isZero();
         assertThat(status(service, expiring.fileId()).status()).isEqualTo(BulkFileStatus.STOPPED);
+    }
+
+    @Test
+    void theConsentCallHashAndParseRunBeforeAnyTransactionAndTheWritesInsideOne() {
+        BulkPaymentService service = service(settings(10));
+        List<String> calls = new ArrayList<>();
+        consentPort.onRead = () -> calls.add("consent read, transaction active="
+                + TransactionSynchronizationManager.isActualTransactionActive());
+        idempotencyPort.onReserve = () -> calls.add("reserve, transaction active="
+                + TransactionSynchronizationManager.isActualTransactionActive());
+        bindingPort.onBind = () -> calls.add("bind, transaction active="
+                + TransactionSynchronizationManager.isActualTransactionActive());
+
+        service.submitFile(command("IDEMP-TX", validCsv("INS-1," + IBAN + ",10.00"), BulkIntegrityMode.PARTIAL_REJECTION));
+
+        assertThat(calls).containsExactly(
+                "consent read, transaction active=false",
+                "reserve, transaction active=true",
+                "bind, transaction active=true");
+        assertThat(transactions.executions).isEqualTo(1);
+
+        // A refused upload (bad hash) never opens a transaction.
+        String content = validCsv("INS-1," + IBAN + ",10.00");
+        assertThatThrownBy(() -> service.submitFile(new SubmitBulkFileCommand("TPP-001", "CONS-IDEMP-TX2", "IDEMP-TX2",
+                "payroll.csv", content, "wrong", "AED", BulkIntegrityMode.PARTIAL_REJECTION, "ix-1")))
+                .isInstanceOf(BusinessRuleViolationException.class);
+        assertThat(transactions.executions).isEqualTo(1);
     }
 
     @Test
@@ -472,7 +504,7 @@ class BulkPaymentServiceTest {
 
     private BulkPaymentService service(BulkSettings settings) {
         return new BulkPaymentService(consentPort, bindingPort, filePort, itemPort, idempotencyPort, cachePort,
-                publisher, settings, CLOCK);
+                publisher, settings, CLOCK, transactions);
     }
 
     private BulkFileProcessingService processor(BulkSettings settings) {
@@ -484,6 +516,7 @@ class BulkPaymentServiceTest {
         private final Map<String, Integer> reads = new ConcurrentHashMap<>();
         private final Set<String> missing = new HashSet<>();
         private boolean failNextRead;
+        private Runnable onRead = () -> { };
 
         private TestConsentPort() {
             data.put("CONS-BULK-001", new BulkConsentContext("CONS-BULK-001", "TPP-001", Set.of("INITIATEBULKPAYMENTS"),
@@ -493,6 +526,7 @@ class BulkPaymentServiceTest {
         @Override
         public Optional<BulkConsentContext> findById(String consentId) {
             reads.merge(consentId, 1, Integer::sum);
+            onRead.run();
             if (failNextRead) {
                 failNextRead = false;
                 throw new IllegalStateException("consent service unavailable");
@@ -580,6 +614,7 @@ class BulkPaymentServiceTest {
     private static final class TestIdempotencyPort implements BulkIdempotencyPort {
         private final Map<String, BulkIdempotencyRecord> records = new ConcurrentHashMap<>();
         private boolean hideOnNextFind;
+        private Runnable onReserve = () -> { };
 
         @Override
         public Optional<BulkIdempotencyRecord> find(String idempotencyKey, String tppId, Instant now) {
@@ -595,6 +630,7 @@ class BulkPaymentServiceTest {
 
         @Override
         public boolean reserve(BulkIdempotencyRecord record, Instant now) {
+            onReserve.run();
             String key = record.idempotencyKey() + ':' + record.tppId();
             BulkIdempotencyRecord existing = records.get(key);
             if (existing != null) {
@@ -607,15 +643,33 @@ class BulkPaymentServiceTest {
 
     private static final class TestBindingPort implements BulkConsentBindingPort {
         private final Map<String, BulkConsentBinding> bindings = new ConcurrentHashMap<>();
+        private Runnable onBind = () -> { };
 
         @Override
         public boolean bind(BulkConsentBinding binding) {
+            onBind.run();
             return bindings.putIfAbsent(binding.consentId(), binding) == null;
         }
 
         @Override
         public Optional<BulkConsentBinding> findByConsentId(String consentId) {
             return Optional.ofNullable(bindings.get(consentId));
+        }
+    }
+
+    /** Marks a transaction active while the callback runs, as a real TransactionTemplate would. */
+    private static final class RecordingTransactions implements TransactionOperations {
+        private int executions;
+
+        @Override
+        public <T> T execute(TransactionCallback<T> action) {
+            executions++;
+            TransactionSynchronizationManager.setActualTransactionActive(true);
+            try {
+                return action.doInTransaction(new SimpleTransactionStatus());
+            } finally {
+                TransactionSynchronizationManager.setActualTransactionActive(false);
+            }
         }
     }
 

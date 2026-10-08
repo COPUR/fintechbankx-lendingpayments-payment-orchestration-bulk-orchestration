@@ -26,6 +26,7 @@ import com.enterprise.openfinance.bulkpayments.domain.port.in.query.GetBulkFileS
 import com.enterprise.openfinance.bulkpayments.domain.service.BulkFileParser;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionOperations;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -43,7 +44,6 @@ import java.util.UUID;
  * publishes the aggregate's events in one transaction.
  */
 @Service
-@Transactional(readOnly = true)
 public class BulkPaymentService implements BulkPaymentUseCase {
 
     static final String REQUIRED_SCOPE = BulkConsentContext.INITIATE_BULK_PAYMENTS;
@@ -57,6 +57,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
     private final BulkFileEventPort eventPublisher;
     private final BulkSettings settings;
     private final Clock clock;
+    private final TransactionOperations transactions;
 
     public BulkPaymentService(BulkConsentPort consentPort,
                               BulkConsentBindingPort bindingPort,
@@ -66,7 +67,8 @@ public class BulkPaymentService implements BulkPaymentUseCase {
                               BulkCachePort cachePort,
                               BulkFileEventPort eventPublisher,
                               BulkSettings settings,
-                              Clock clock) {
+                              Clock clock,
+                              TransactionOperations transactions) {
         this.consentPort = consentPort;
         this.bindingPort = bindingPort;
         this.filePort = filePort;
@@ -76,10 +78,17 @@ public class BulkPaymentService implements BulkPaymentUseCase {
         this.eventPublisher = eventPublisher;
         this.settings = settings;
         this.clock = clock;
+        this.transactions = transactions;
     }
 
+    /**
+     * The consent call, the size and hash checks and the parse run before any
+     * transaction, so no database connection is held while the consent service
+     * answers or a large file is parsed. The transaction starts at the
+     * idempotency reservation and covers the binding, the file, its items and
+     * the outbox rows.
+     */
     @Override
-    @Transactional
     public BulkUploadResult submitFile(SubmitBulkFileCommand command) {
         Instant now = Instant.now(clock);
         validateConsent(command.consentId(), command.tppId(), now);
@@ -97,6 +106,10 @@ public class BulkPaymentService implements BulkPaymentUseCase {
                 command.idempotencyKey(), command.requestHash(), command.fileName(), command.integrityMode(),
                 parsed, now);
 
+        return transactions.execute(status -> store(command, parsed, file, now));
+    }
+
+    private BulkUploadResult store(SubmitBulkFileCommand command, ParsedBulkFile parsed, BulkFile file, Instant now) {
         boolean reserved = idempotencyPort.reserve(new BulkIdempotencyRecord(
                 command.idempotencyKey(), command.tppId(), command.requestHash(), file.fileId(), file.status(),
                 now.plus(settings.idempotencyTtl())), now);
@@ -120,6 +133,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public Optional<BulkFile> getFileStatus(GetBulkFileStatusQuery query) {
         Optional<BulkFile> file = filePort.findById(query.fileId());
         file.ifPresent(found -> ensureFileOwnership(found, query.tppId()));
@@ -127,6 +141,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public Optional<BulkFileReport> getFileReport(GetBulkFileReportQuery query) {
         Instant now = Instant.now(clock);
         String cacheKey = reportCacheKey(query.fileId(), query.tppId());
