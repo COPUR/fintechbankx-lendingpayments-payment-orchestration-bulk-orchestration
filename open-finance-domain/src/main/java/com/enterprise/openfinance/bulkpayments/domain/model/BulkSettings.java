@@ -2,11 +2,17 @@ package com.enterprise.openfinance.bulkpayments.domain.model;
 
 import java.time.Duration;
 
+/**
+ * Policy values of the bulk-payments context.
+ *
+ * @param processingBatchSize upper bound of items processed per transaction,
+ *                            so a large file never holds one long transaction
+ */
 public record BulkSettings(
         Duration idempotencyTtl,
         Duration cacheTtl,
         long maxFileSizeBytes,
-        int statusPollsToComplete
+        int processingBatchSize
 ) {
 
     public BulkSettings {
@@ -19,8 +25,8 @@ public record BulkSettings(
         if (maxFileSizeBytes <= 0) {
             throw new IllegalArgumentException("maxFileSizeBytes must be positive");
         }
-        if (statusPollsToComplete <= 0) {
-            throw new IllegalArgumentException("statusPollsToComplete must be positive");
+        if (processingBatchSize <= 0) {
+            throw new IllegalArgumentException("processingBatchSize must be positive");
         }
     }
 }

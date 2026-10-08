@@ -1,12 +1,12 @@
 package com.enterprise.openfinance.bulkpayments.infrastructure.rest;
 
-import com.enterprise.openfinance.bulkpayments.domain.command.SubmitBulkFileCommand;
+import com.enterprise.openfinance.bulkpayments.domain.port.in.command.SubmitBulkFileCommand;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFile;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileReport;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkIntegrityMode;
 import com.enterprise.openfinance.bulkpayments.domain.port.in.BulkPaymentUseCase;
-import com.enterprise.openfinance.bulkpayments.domain.query.GetBulkFileReportQuery;
-import com.enterprise.openfinance.bulkpayments.domain.query.GetBulkFileStatusQuery;
+import com.enterprise.openfinance.bulkpayments.domain.port.in.query.GetBulkFileReportQuery;
+import com.enterprise.openfinance.bulkpayments.domain.port.in.query.GetBulkFileStatusQuery;
 import com.enterprise.openfinance.bulkpayments.infrastructure.rest.dto.BulkFileReportResponse;
 import com.enterprise.openfinance.bulkpayments.infrastructure.rest.dto.BulkFileRequest;
 import com.enterprise.openfinance.bulkpayments.infrastructure.rest.dto.BulkFileStatusResponse;
@@ -163,10 +163,7 @@ public class BulkPaymentsController {
     }
 
     private static String resolveTppId(String financialId) {
-        if (financialId == null || financialId.isBlank()) {
-            return "UNKNOWN_TPP";
-        }
-        return financialId.trim();
+        return TppIdentityResolver.resolve(financialId);
     }
 
     private static void validateSecurityHeaders(String authorization,
@@ -185,12 +182,13 @@ public class BulkPaymentsController {
     }
 
     private static String generateStatusEtag(BulkFile file) {
-        String signature = file.fileId() + '|' + file.status() + '|' + file.pollCount() + '|' + file.processedAt();
+        String signature = file.fileId() + '|' + file.status() + '|' + file.processedCount() + '|' + file.processedAt();
         return hashSignature(signature);
     }
 
     private static String generateReportEtag(BulkFileReport report) {
-        String signature = report.fileId() + '|' + report.status() + '|' + report.acceptedCount() + '|' + report.rejectedCount();
+        String signature = report.fileId() + '|' + report.status() + '|' + report.acceptedCount() + '|' + report.rejectedCount()
+                + '|' + report.items().size();
         return hashSignature(signature);
     }
 

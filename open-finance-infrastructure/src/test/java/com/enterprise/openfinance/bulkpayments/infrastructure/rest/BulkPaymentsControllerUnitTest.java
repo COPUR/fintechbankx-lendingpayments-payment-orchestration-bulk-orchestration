@@ -1,6 +1,6 @@
 package com.enterprise.openfinance.bulkpayments.infrastructure.rest;
 
-import com.enterprise.openfinance.bulkpayments.domain.command.SubmitBulkFileCommand;
+import com.enterprise.openfinance.bulkpayments.domain.port.in.command.SubmitBulkFileCommand;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFile;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileReport;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileStatus;
@@ -43,7 +43,7 @@ class BulkPaymentsControllerUnitTest {
                 0,
                 Instant.parse("2026-02-09T10:00:00Z")
         ));
-        Mockito.when(useCase.getFileStatus(Mockito.any())).thenReturn(Optional.of(file("FILE-001", BulkFileStatus.PROCESSING, BulkFileStatus.COMPLETED, 0, null)));
+        Mockito.when(useCase.getFileStatus(Mockito.any())).thenReturn(Optional.of(file("FILE-001", BulkFileStatus.PROCESSING, BulkFileStatus.PARTIALLY_ACCEPTED, 0, null)));
         Mockito.when(useCase.getFileReport(Mockito.any())).thenReturn(Optional.of(report("FILE-001", BulkFileStatus.COMPLETED)));
 
         ResponseEntity<BulkUploadResponse> upload = controller.uploadFile(
@@ -84,7 +84,7 @@ class BulkPaymentsControllerUnitTest {
         BulkPaymentUseCase useCase = Mockito.mock(BulkPaymentUseCase.class);
         BulkPaymentsController controller = new BulkPaymentsController(useCase);
 
-        Mockito.when(useCase.getFileStatus(Mockito.any())).thenReturn(Optional.of(file("FILE-001", BulkFileStatus.COMPLETED, BulkFileStatus.COMPLETED, 2, Instant.parse("2026-02-09T10:00:02Z"))));
+        Mockito.when(useCase.getFileStatus(Mockito.any())).thenReturn(Optional.of(file("FILE-001", BulkFileStatus.PARTIALLY_ACCEPTED, BulkFileStatus.PARTIALLY_ACCEPTED, 2, Instant.parse("2026-02-09T10:00:02Z"))));
         Mockito.when(useCase.getFileReport(Mockito.any())).thenReturn(Optional.of(report("FILE-001", BulkFileStatus.COMPLETED)));
 
         ResponseEntity<BulkFileStatusResponse> statusFirst = controller.getFileStatus("DPoP token", "proof", "ix-1", "TPP-001", "FILE-001", null);
@@ -128,12 +128,29 @@ class BulkPaymentsControllerUnitTest {
                 .hasMessageContaining("Bearer or DPoP");
     }
 
+    @Test
+    void anotherTppNamedInTheHeaderIsForbiddenWhenTheTokenSaysOtherwise() {
+        BulkPaymentUseCase useCase = Mockito.mock(BulkPaymentUseCase.class);
+        BulkPaymentsController controller = new BulkPaymentsController(useCase);
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+                new org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken(
+                        org.springframework.security.oauth2.jwt.Jwt.withTokenValue("t").header("alg", "none")
+                                .claim("azp", "TPP-001").build()));
+        try {
+            assertThatThrownBy(() -> controller.getFileStatus("DPoP token", "proof", "ix-1", "TPP-999", "FILE-001", null))
+                    .isInstanceOf(com.enterprise.openfinance.bulkpayments.domain.exception.ForbiddenException.class);
+            Mockito.verifyNoInteractions(useCase);
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+    }
+
     private static BulkFile file(String fileId,
                                  BulkFileStatus status,
                                  BulkFileStatus targetStatus,
-                                 int pollCount,
+                                 int processedCount,
                                  Instant processedAt) {
-        return new BulkFile(
+        return BulkFile.rehydrate(
                 fileId,
                 "CONS-BULK-001",
                 "TPP-001",
@@ -143,13 +160,15 @@ class BulkPaymentsControllerUnitTest {
                 BulkIntegrityMode.PARTIAL_REJECTION,
                 status,
                 targetStatus,
-                pollCount,
+                processedCount,
                 2,
                 1,
                 1,
                 new BigDecimal("20.00"),
+                new BigDecimal("10.00"),
                 Instant.parse("2026-02-09T10:00:00Z"),
-                processedAt
+                processedAt,
+                0L
         );
     }
 

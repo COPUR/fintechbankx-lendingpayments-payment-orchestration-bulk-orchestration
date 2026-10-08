@@ -16,7 +16,7 @@ class BulkSettingsTest {
         assertThat(settings.idempotencyTtl()).isEqualTo(Duration.ofHours(24));
         assertThat(settings.cacheTtl()).isEqualTo(Duration.ofSeconds(30));
         assertThat(settings.maxFileSizeBytes()).isEqualTo(10_000_000L);
-        assertThat(settings.statusPollsToComplete()).isEqualTo(2);
+        assertThat(settings.processingBatchSize()).isEqualTo(2);
     }
 
     @Test
@@ -26,19 +26,19 @@ class BulkSettingsTest {
         assertInvalid(Duration.ZERO, Duration.ofSeconds(30), 10_000_000L, 2, "idempotencyTtl");
         assertInvalid(Duration.ofHours(24), Duration.ZERO, 10_000_000L, 2, "cacheTtl");
         assertInvalid(Duration.ofHours(24), Duration.ofSeconds(30), 0L, 2, "maxFileSizeBytes");
-        assertInvalid(Duration.ofHours(24), Duration.ofSeconds(30), 10_000_000L, 0, "statusPollsToComplete");
+        assertInvalid(Duration.ofHours(24), Duration.ofSeconds(30), 10_000_000L, 0, "processingBatchSize");
     }
 
     private static void assertInvalid(Duration idempotencyTtl,
                                       Duration cacheTtl,
                                       long maxFileSizeBytes,
-                                      int statusPollsToComplete,
+                                      int processingBatchSize,
                                       String expectedField) {
         assertThatThrownBy(() -> new BulkSettings(
                 idempotencyTtl,
                 cacheTtl,
                 maxFileSizeBytes,
-                statusPollsToComplete
+                processingBatchSize
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(expectedField);
     }

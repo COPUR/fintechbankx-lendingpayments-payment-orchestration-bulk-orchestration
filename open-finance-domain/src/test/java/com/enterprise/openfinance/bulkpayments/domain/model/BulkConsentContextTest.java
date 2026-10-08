@@ -16,7 +16,8 @@ class BulkConsentContextTest {
                 "CONS-BULK-001",
                 "TPP-001",
                 Set.of("bulk-payment"),
-                Instant.parse("2099-01-01T00:00:00Z")
+                Instant.parse("2099-01-01T00:00:00Z"),
+                true
         );
 
         assertThat(consent.belongsToTpp("TPP-001")).isTrue();
@@ -25,6 +26,9 @@ class BulkConsentContextTest {
         assertThat(consent.hasScope("read-balances")).isFalse();
         assertThat(consent.isActive(Instant.parse("2026-02-09T00:00:00Z"))).isTrue();
         assertThat(consent.isActive(Instant.parse("2100-01-01T00:00:00Z"))).isFalse();
+        assertThat(consent.isAuthorized()).isTrue();
+        assertThat(new BulkConsentContext("CONS-BULK-002", "TPP-001", Set.of("bulk-payment"),
+                Instant.parse("2099-01-01T00:00:00Z"), false).isAuthorized()).isFalse();
     }
 
     @Test
@@ -45,7 +49,8 @@ class BulkConsentContextTest {
                 consentId,
                 tppId,
                 scopes,
-                expiresAt
+                expiresAt,
+                true
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(expectedField);
     }

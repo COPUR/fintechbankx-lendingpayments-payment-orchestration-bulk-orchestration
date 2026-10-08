@@ -5,7 +5,12 @@ import com.enterprise.openfinance.bulkpayments.domain.exception.ForbiddenExcepti
 import com.enterprise.openfinance.bulkpayments.domain.exception.IdempotencyConflictException;
 import com.enterprise.openfinance.bulkpayments.domain.exception.ResourceNotFoundException;
 import com.enterprise.openfinance.bulkpayments.infrastructure.rest.dto.BulkErrorResponse;
+import com.enterprise.openfinance.bulkpayments.infrastructure.consent.ConsentServiceUnavailableException;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -13,6 +18,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice(basePackages = "com.enterprise.openfinance.bulkpayments.infrastructure.rest")
 public class BulkPaymentsExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(BulkPaymentsExceptionHandler.class);
 
     @ExceptionHandler(ForbiddenException.class)
     public ResponseEntity<BulkErrorResponse> handleForbidden(ForbiddenException exception,
@@ -42,6 +49,29 @@ public class BulkPaymentsExceptionHandler {
                 .body(BulkErrorResponse.of("BUSINESS_RULE_VIOLATION", exception.getMessage(), interactionId(request)));
     }
 
+    @ExceptionHandler(ConsentServiceUnavailableException.class)
+    public ResponseEntity<BulkErrorResponse> handleConsentUnavailable(ConsentServiceUnavailableException exception,
+                                                                      HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(BulkErrorResponse.of("CONSENT_SERVICE_UNAVAILABLE", "Consent could not be verified; retry later",
+                        interactionId(request)));
+    }
+
+    @ExceptionHandler(MissingRequestHeaderException.class)
+    public ResponseEntity<BulkErrorResponse> handleMissingHeader(MissingRequestHeaderException exception,
+                                                                 HttpServletRequest request) {
+        return ResponseEntity.badRequest()
+                .body(BulkErrorResponse.of("INVALID_REQUEST", "Missing header: " + exception.getHeaderName(),
+                        interactionId(request)));
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<BulkErrorResponse> handleUnreadable(HttpMessageNotReadableException exception,
+                                                              HttpServletRequest request) {
+        return ResponseEntity.badRequest()
+                .body(BulkErrorResponse.of("INVALID_REQUEST", "Malformed request body", interactionId(request)));
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<BulkErrorResponse> handleBadRequest(IllegalArgumentException exception,
                                                               HttpServletRequest request) {
@@ -52,6 +82,7 @@ public class BulkPaymentsExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<BulkErrorResponse> handleUnexpected(Exception exception,
                                                               HttpServletRequest request) {
+        log.error("Unhandled error on {} {}", request.getMethod(), request.getRequestURI(), exception);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(BulkErrorResponse.of("INTERNAL_ERROR", "Unexpected error occurred", interactionId(request)));
     }

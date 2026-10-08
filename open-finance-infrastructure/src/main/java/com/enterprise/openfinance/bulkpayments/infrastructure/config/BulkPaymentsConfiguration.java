@@ -8,7 +8,8 @@ import org.springframework.context.annotation.Configuration;
 import java.time.Clock;
 
 @Configuration
-@EnableConfigurationProperties({BulkPaymentsCacheProperties.class, BulkPaymentsPolicyProperties.class, BulkPaymentsProcessingProperties.class})
+@EnableConfigurationProperties({BulkPaymentsCacheProperties.class, BulkPaymentsPolicyProperties.class,
+        BulkPaymentsProcessingProperties.class})
 public class BulkPaymentsConfiguration {
 
     @Bean
@@ -24,7 +25,7 @@ public class BulkPaymentsConfiguration {
                 policyProperties.getIdempotencyTtl(),
                 cacheProperties.getTtl(),
                 processingProperties.getMaxFileSizeBytes(),
-                processingProperties.getStatusPollsToComplete()
+                processingProperties.getBatchSize()
         );
     }
 }

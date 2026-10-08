@@ -4,11 +4,17 @@ import java.time.Instant;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+/**
+ * Local read model of a consent owned by the consent service
+ * (fintechbankx-openfinance-consent-auth-service). Bulk payments reads it
+ * through {@code BulkConsentPort}; it never stores or changes consents.
+ */
 public record BulkConsentContext(
         String consentId,
         String tppId,
         Set<String> scopes,
-        Instant expiresAt
+        Instant expiresAt,
+        boolean authorized
 ) {
 
     public BulkConsentContext {
@@ -40,6 +46,11 @@ public record BulkConsentContext(
 
     public boolean isActive(Instant now) {
         return expiresAt.isAfter(now);
+    }
+
+    /** The PSU authorised the consent and has not revoked it. */
+    public boolean isAuthorized() {
+        return authorized;
     }
 
     private static boolean isBlank(String value) {
