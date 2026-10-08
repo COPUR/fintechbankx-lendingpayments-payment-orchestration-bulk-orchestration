@@ -58,9 +58,11 @@ class JpaBulkFileAdapterTest {
     void readsAndClaimsThroughTheMapper() {
         BulkFileJpaEntity stored = BulkFilePersistenceMapper.toNewEntity(BulkFilePersistenceMapperTest.newFile());
         when(repository.findById("FILE-1")).thenReturn(Optional.of(stored));
-        when(repository.lockNextProcessing()).thenReturn(Optional.of(stored));
+        when(repository.lockProcessing("FILE-1")).thenReturn(Optional.of(stored));
+        when(repository.findProcessing(5)).thenReturn(java.util.List.of(stored));
 
         assertThat(adapter.findById("FILE-1")).map(BulkFile::fileId).contains("FILE-1");
-        assertThat(adapter.claimNextProcessing()).map(BulkFile::tppId).contains("TPP-001");
+        assertThat(adapter.claimProcessing("FILE-1")).map(BulkFile::tppId).contains("TPP-001");
+        assertThat(adapter.findProcessing(5)).extracting(BulkFile::fileId).containsExactly("FILE-1");
     }
 }

@@ -689,18 +689,26 @@ class BulkOrchestrationServiceIT {
         CountDownLatch release = new CountDownLatch(1);
         ExecutorService pool = Executors.newSingleThreadExecutor();
         try {
+            // Another replica holds the oldest file's row lock in its batch transaction.
             Future<Optional<String>> holder = pool.submit(() -> tx.execute(status -> {
-                Optional<String> claimed = files.claimNextProcessing().map(f -> f.fileId());
+                Optional<String> claimed = files.claimProcessing(first).map(f -> f.fileId());
                 firstClaimed.countDown();
                 await(release);
                 return claimed;
             }));
             assertThat(firstClaimed.await(10, TimeUnit.SECONDS)).isTrue();
-            Optional<String> other = tx.execute(status -> files.claimNextProcessing().map(f -> f.fileId()));
+            Optional<com.enterprise.openfinance.bulkpayments.domain.model.BulkFile> again = tx.execute(status -> files.claimProcessing(first));
+            assertThat(again).as("skipped, not waited for").isEmpty();
+            transactionActiveAtConsentRead.clear();
+
+            // This replica skips it and processes the next file; it read both consents outside any transaction.
+            assertThat(processor.processNextBatch()).isEqualTo(1);
             release.countDown();
 
             assertThat(holder.get(10, TimeUnit.SECONDS)).contains(first);
-            assertThat(other).contains(second);
+            assertThat(files.findById(second).orElseThrow().status().apiValue()).isEqualTo("Validated");
+            assertThat(files.findById(first).orElseThrow().status().apiValue()).isEqualTo("Processing");
+            assertThat(transactionActiveAtConsentRead).isNotEmpty().containsOnly(false);
         } finally {
             release.countDown();
             pool.shutdownNow();

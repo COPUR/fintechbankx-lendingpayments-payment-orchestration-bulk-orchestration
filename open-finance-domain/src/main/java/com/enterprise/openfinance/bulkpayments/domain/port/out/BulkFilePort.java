@@ -2,6 +2,7 @@ package com.enterprise.openfinance.bulkpayments.domain.port.out;
 
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFile;
 
+import java.util.List;
 import java.util.Optional;
 
 public interface BulkFilePort {
@@ -15,9 +16,15 @@ public interface BulkFilePort {
     Optional<BulkFile> findById(String fileId);
 
     /**
-     * Claims the oldest file still processing for the current transaction.
-     * Files claimed by another transaction are skipped, so several replicas
-     * can process different files at the same time.
+     * Up to {@code limit} files still processing, oldest first, read without a
+     * lock: the candidates of a processing run.
      */
-    Optional<BulkFile> claimNextProcessing();
+    List<BulkFile> findProcessing(int limit);
+
+    /**
+     * Claims {@code fileId} for the current transaction if it is still
+     * processing. A file claimed by another transaction is skipped (empty), not
+     * waited for, so several replicas can process different files at once.
+     */
+    Optional<BulkFile> claimProcessing(String fileId);
 }

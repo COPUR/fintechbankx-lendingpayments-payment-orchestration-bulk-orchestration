@@ -168,6 +168,43 @@ class BulkPaymentServiceTest {
         assertThat(consentPort.reads.get(consentId)).isEqualTo(3);
     }
 
+    /** The per-batch consent read happens before the batch transaction (and so before the file row lock). */
+    @Test
+    void theConsentIsReadBeforeTheBatchTransactionAndTheBatchRunsInsideOne() {
+        BulkPaymentService service = service(settings(2));
+        BulkFileProcessingService processor = processor(settings(2));
+        service.submitFile(command("IDEMP-BTX", validCsv("INS-1," + IBAN + ",10.00"), BulkIntegrityMode.PARTIAL_REJECTION));
+        int uploadTransactions = transactions.executions;
+        List<String> calls = new ArrayList<>();
+        consentPort.onRead = () -> calls.add("consent read, transaction active="
+                + TransactionSynchronizationManager.isActualTransactionActive());
+        itemPort.onMark = () -> calls.add("mark processed, transaction active="
+                + TransactionSynchronizationManager.isActualTransactionActive());
+
+        assertThat(processor.processNextBatch()).isEqualTo(1);
+
+        assertThat(calls).containsExactly(
+                "consent read, transaction active=false",
+                "mark processed, transaction active=true");
+        assertThat(transactions.executions - uploadTransactions).isEqualTo(1);
+    }
+
+    @Test
+    void aFileHeldByAnotherReplicaIsSkippedAndTheNextOneProcessed() {
+        BulkPaymentService service = service(settings(5));
+        BulkFileProcessingService processor = processor(settings(5));
+        BulkUploadResult held = service.submitFile(command("IDEMP-HELD", validCsv("INS-1," + IBAN + ",10.00"),
+                BulkIntegrityMode.PARTIAL_REJECTION));
+        BulkUploadResult free = service.submitFile(command("IDEMP-FREE", validCsv("INS-1," + IBAN + ",20.00"),
+                BulkIntegrityMode.PARTIAL_REJECTION));
+        filePort.lockedElsewhere.add(held.fileId());
+
+        assertThat(processor.processNextBatch()).isEqualTo(1);
+
+        assertThat(status(service, held.fileId()).status()).isEqualTo(BulkFileStatus.PROCESSING);
+        assertThat(status(service, free.fileId()).status()).isEqualTo(BulkFileStatus.VALIDATED);
+    }
+
     @Test
     void aConsentThatDisappearedOrExpiredAlsoStopsTheFileButAnOutageDoesNot() {
         BulkPaymentService service = service(settings(1));
@@ -530,7 +567,7 @@ class BulkPaymentServiceTest {
     }
 
     private BulkFileProcessingService processor(BulkSettings settings) {
-        return new BulkFileProcessingService(filePort, itemPort, consentPort, publisher, settings, CLOCK);
+        return new BulkFileProcessingService(filePort, itemPort, consentPort, publisher, settings, CLOCK, transactions);
     }
 
     private static final class TestConsentPort implements BulkConsentPort {
@@ -587,11 +624,24 @@ class BulkPaymentServiceTest {
             return Optional.ofNullable(data.get(fileId)).map(file -> copy(file, file.version()));
         }
 
+        /** File ids another replica holds locked: claimProcessing skips them. */
+        private final Set<String> lockedElsewhere = new HashSet<>();
+
         @Override
-        public Optional<BulkFile> claimNextProcessing() {
+        public List<BulkFile> findProcessing(int limit) {
             return data.values().stream()
                     .filter(file -> file.status() == BulkFileStatus.PROCESSING)
-                    .min(Comparator.comparing(BulkFile::createdAt))
+                    .sorted(Comparator.comparing(BulkFile::createdAt))
+                    .limit(limit)
+                    .map(file -> copy(file, file.version()))
+                    .toList();
+        }
+
+        @Override
+        public Optional<BulkFile> claimProcessing(String fileId) {
+            return Optional.ofNullable(data.get(fileId))
+                    .filter(file -> file.status() == BulkFileStatus.PROCESSING)
+                    .filter(file -> !lockedElsewhere.contains(fileId))
                     .map(file -> copy(file, file.version()));
         }
 
@@ -606,6 +656,7 @@ class BulkPaymentServiceTest {
     private static final class TestItemPort implements BulkItemPort {
         private final Map<String, List<BulkItemResult>> items = new ConcurrentHashMap<>();
         private final Map<String, Set<Integer>> processed = new ConcurrentHashMap<>();
+        private Runnable onMark = () -> { };
 
         @Override
         public void saveAll(String fileId, List<BulkItemResult> fileItems) {
@@ -628,6 +679,7 @@ class BulkPaymentServiceTest {
 
         @Override
         public int markProcessed(String fileId, Collection<Integer> lineNumbers, Instant processedAt) {
+            onMark.run();
             processed.computeIfAbsent(fileId, key -> new HashSet<>()).addAll(lineNumbers);
             return lineNumbers.size();
         }

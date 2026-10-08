@@ -39,7 +39,12 @@ public class JpaBulkFileAdapter implements BulkFilePort {
     }
 
     @Override
-    public Optional<BulkFile> claimNextProcessing() {
-        return files.lockNextProcessing().map(BulkFilePersistenceMapper::toDomain);
+    public java.util.List<BulkFile> findProcessing(int limit) {
+        return files.findProcessing(limit).stream().map(BulkFilePersistenceMapper::toDomain).toList();
+    }
+
+    @Override
+    public Optional<BulkFile> claimProcessing(String fileId) {
+        return files.lockProcessing(fileId).map(BulkFilePersistenceMapper::toDomain);
     }
 }
