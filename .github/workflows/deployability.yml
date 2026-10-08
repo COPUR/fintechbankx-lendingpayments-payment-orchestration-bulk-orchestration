@@ -38,7 +38,8 @@ jobs:
         run: |
           chart=deploy/helm/payment-bulk-orchestration-service
           args="--set image.repository=ci/payment-bulk-orchestration-service --set image.tag=${{ github.sha }}"
-          args="$args --set externalSecret.remoteSecretName=ci/db-app --set externalSecret.serviceClientSecretName=ci/oidc-client"
+          args="$args --set externalSecret.remoteSecretName=dev/payment-bulk-orchestration-service/db-app"
+          args="$args --set externalSecret.serviceClientSecretName=dev/payment-bulk-orchestration-service/oidc-client"
           args="$args --set config.DB_URL=jdbc:postgresql://ci-db:5432/db_pay_bulk_orchestration_ci"
           args="$args --set config.KAFKA_BOOTSTRAP_SERVERS=ci-kafka:9098"
           args="$args --set config.OIDC_ISSUER_URI=https://ci-idp/realms/fintechbankx"
@@ -48,9 +49,25 @@ jobs:
           helm template ci "$chart" --namespace payments $args > /dev/null
           helm template ci "$chart" --namespace payments -f "$chart/values-dev.yaml" $args > /dev/null
           helm template ci "$chart" --namespace payments --set kafkaStrimzi.enabled=true $args > /dev/null
+          # Platform admission policy: every ExternalSecret carries
+          # app.kubernetes.io/name=<service account> and reads only <env>/<service account>/.
+          sa=payment-bulk-orchestration-service
+          rendered="$(helm template ci "$chart" --namespace payments $args)"
+          keys="$(grep -E '^ +key: ' <<<"$rendered" | awk '{print $2}')"
+          test -n "$keys"
+          if grep -vE "^(dev|staging|prod)/$sa/[a-z0-9-]+$" <<<"$keys"; then
+            echo "ExternalSecret remoteRef key outside <env>/$sa/" >&2; exit 1
+          fi
+          if [ "$(grep -c '^kind: ExternalSecret' <<<"$rendered")" -ne "$(awk '/^kind: ExternalSecret/{es=1} /^---/{es=0} es && /app.kubernetes.io\/name: payment-bulk-orchestration-service$/{n++; es=0} END{print n+0}' <<<"$rendered")" ]; then
+            echo "an ExternalSecret lacks app.kubernetes.io/name=$sa" >&2; exit 1
+          fi
+          if helm template ci "$chart" $args --set externalSecret.remoteSecretName=dev-$sa/db-app > /dev/null 2>&1; then
+            echo "chart rendered a remoteRef key outside <env>/$sa/" >&2; exit 1
+          fi
           # A missing required value must fail the render.
           if helm template ci "$chart" --set image.repository=x --set image.tag=y \
-               --set externalSecret.remoteSecretName=a --set externalSecret.serviceClientSecretName=b > /dev/null 2>&1; then
+               --set externalSecret.remoteSecretName=dev/payment-bulk-orchestration-service/db-app \
+               --set externalSecret.serviceClientSecretName=dev/payment-bulk-orchestration-service/oidc-client > /dev/null 2>&1; then
             echo "chart rendered without required config"; exit 1
           fi
 

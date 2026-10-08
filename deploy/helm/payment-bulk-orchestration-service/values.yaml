@@ -73,7 +73,10 @@ externalSecret:
   secretStoreRef:
     kind: ClusterSecretStore
     name: aws-secrets-manager
-  # Secrets Manager secret from deploy/terraform output app_db_secret_name.
+  # Keys must be <env>/payment-bulk-orchestration-service/<name> (platform
+  # admission policy; the chart refuses anything else at render time).
+  # <env>/payment-bulk-orchestration-service/db-app (runtime role password,
+  # deploy/terraform output app_db_secret_name).
   remoteSecretName: ""
   # This service's Keycloak client secret: <env>/payment-bulk-orchestration-service/oidc-client, property client_secret.
   serviceClientSecretName: ""
