@@ -85,7 +85,8 @@ class BulkFileTest {
 
         assertThatThrownBy(() -> file.recordProcessedBatch(3, BATCH_1))
                 .isInstanceOf(BusinessRuleViolationException.class)
-                .hasMessageContaining("only 2 unprocessed items");
+                .hasMessageContaining("only 2 unprocessed items")
+                .message().doesNotContain("FILE-001");
         assertThatThrownBy(() -> file.recordProcessedBatch(0, BATCH_1))
                 .isInstanceOf(IllegalArgumentException.class);
 
@@ -93,7 +94,8 @@ class BulkFileTest {
         assertThat(file.status()).isEqualTo(BulkFileStatus.VALIDATED);
         assertThatThrownBy(() -> file.recordProcessedBatch(1, BATCH_2))
                 .isInstanceOf(BusinessRuleViolationException.class)
-                .hasMessageContaining("is not processing");
+                .hasMessageContaining("is not processing")
+                .message().doesNotContain("FILE-001");
     }
 
     @Test

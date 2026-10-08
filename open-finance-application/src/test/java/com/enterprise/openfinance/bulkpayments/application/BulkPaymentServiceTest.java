@@ -222,7 +222,8 @@ class BulkPaymentServiceTest {
 
         assertThatThrownBy(processor::processNextBatch)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("none is stored");
+                .hasMessageContaining("none is stored")
+                .message().doesNotContain(upload.fileId());
     }
 
     @Test

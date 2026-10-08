@@ -73,14 +73,14 @@ public class BulkFileProcessingService implements ProcessBulkFilesUseCase {
         int limit = Math.min(settings.processingBatchSize(), file.remainingItems());
         List<BulkItemResult> batch = itemPort.findUnprocessed(file.fileId(), limit);
         if (batch.isEmpty()) {
-            throw new IllegalStateException("Bulk file " + file.fileId() + " has " + file.remainingItems()
+            throw new IllegalStateException("Bulk file has " + file.remainingItems()
                     + " items left to process but none is stored");
         }
 
         int marked = itemPort.markProcessed(file.fileId(),
                 batch.stream().map(BulkItemResult::lineNumber).toList(), now);
         if (marked != batch.size()) {
-            throw new IllegalStateException("Bulk file " + file.fileId() + ": marked " + marked + " of "
+            throw new IllegalStateException("Bulk file batch: marked " + marked + " of "
                     + batch.size() + " items; batch rolled back");
         }
 

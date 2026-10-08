@@ -200,13 +200,13 @@ public final class BulkFile {
     public void recordProcessedBatch(int itemCount, Instant now) {
         Objects.requireNonNull(now, "now");
         if (status != BulkFileStatus.PROCESSING) {
-            throw new BusinessRuleViolationException("Bulk file " + fileId + " is not processing");
+            throw new BusinessRuleViolationException("Bulk file is not processing");
         }
         if (itemCount <= 0) {
             throw new IllegalArgumentException("itemCount must be positive");
         }
         if (processedCount + itemCount > totalCount) {
-            throw new BusinessRuleViolationException("Bulk file " + fileId + " has only "
+            throw new BusinessRuleViolationException("Bulk file has only "
                     + remainingItems() + " unprocessed items");
         }
         processedCount += itemCount;
@@ -231,7 +231,7 @@ public final class BulkFile {
     public void stopBecauseConsentIsNotUsable(Instant now) {
         Objects.requireNonNull(now, "now");
         if (status != BulkFileStatus.PROCESSING) {
-            throw new BusinessRuleViolationException("Bulk file " + fileId + " is not processing");
+            throw new BusinessRuleViolationException("Bulk file is not processing");
         }
         status = BulkFileStatus.STOPPED;
         processedAt = now;
