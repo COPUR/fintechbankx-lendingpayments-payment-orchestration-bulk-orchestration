@@ -82,7 +82,7 @@ class OutboxBulkFileEventPublisherTest {
     private static BulkFile file() {
         ParsedBulkFile parsed = new ParsedBulkFile(
                 List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", BigDecimal.TEN)),
-                1, 1, 0, BigDecimal.TEN, BigDecimal.TEN, BulkFileStatus.COMPLETED);
+                1, 1, 0, BigDecimal.TEN, BigDecimal.TEN, BulkFileStatus.VALIDATED);
         return BulkFile.accept("FILE-1", "CONS-1", "TPP-001", "IDEMP-1", "hash", "f.csv",
                 BulkIntegrityMode.PARTIAL_REJECTION, parsed, Instant.parse("2026-02-09T10:00:00Z"));
     }

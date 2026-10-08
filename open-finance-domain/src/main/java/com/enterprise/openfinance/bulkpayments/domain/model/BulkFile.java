@@ -1,7 +1,6 @@
 package com.enterprise.openfinance.bulkpayments.domain.model;
 
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileAccepted;
-import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileCompleted;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileEvent;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileRejected;
 import com.enterprise.openfinance.bulkpayments.domain.exception.BusinessRuleViolationException;
@@ -19,12 +18,14 @@ import java.util.UUID;
  * number; the aggregate keeps the counters and the lifecycle.
  *
  * <pre>
- * accept() ──▶ PROCESSING ──recordProcessedBatch()…──▶ COMPLETED | PARTIALLY_ACCEPTED | REJECTED
+ * accept() ──▶ PROCESSING ──recordProcessedBatch()…──▶ VALIDATED | REJECTED
  * </pre>
  *
  * The validation outcome of each item is fixed at upload ({@code targetStatus});
  * processing walks the items in bounded batches and the file reaches its
- * target status when the last item has been processed.
+ * target status when the last item has been processed. No completion is
+ * claimed: accepted items have not reached initiation-settlement, so a
+ * VALIDATED file raises no event; an all-rejected file raises BulkFileRejected.
  */
 public final class BulkFile {
 
@@ -78,10 +79,10 @@ public final class BulkFile {
         if (status == null) {
             throw new IllegalArgumentException("status is required");
         }
-        if (targetStatus == null || !targetStatus.isTerminal()) {
-            throw new IllegalArgumentException("targetStatus must be a terminal status");
+        if (targetStatus == null || !targetStatus.isValidationFinished()) {
+            throw new IllegalArgumentException("targetStatus must be VALIDATED or REJECTED");
         }
-        if (status.isTerminal() && status != targetStatus) {
+        if (status.isValidationFinished() && status != targetStatus) {
             throw new IllegalArgumentException("status must be PROCESSING or equal to targetStatus");
         }
         if (totalCount <= 0) {
@@ -90,8 +91,8 @@ public final class BulkFile {
         if (processedCount < 0 || processedCount > totalCount) {
             throw new IllegalArgumentException("processedCount out of range");
         }
-        if (status.isTerminal() != (processedCount == totalCount)) {
-            throw new IllegalArgumentException("processedCount must equal totalCount exactly when the file is terminal");
+        if (status.isValidationFinished() != (processedCount == totalCount)) {
+            throw new IllegalArgumentException("processedCount must equal totalCount exactly when validation is finished");
         }
         if (acceptedCount < 0 || acceptedCount > totalCount) {
             throw new IllegalArgumentException("acceptedCount out of range");
@@ -111,8 +112,8 @@ public final class BulkFile {
         if (createdAt == null) {
             throw new IllegalArgumentException("createdAt is required");
         }
-        if (status.isTerminal() && processedAt == null) {
-            throw new IllegalArgumentException("processedAt is required once the file is terminal");
+        if (status.isValidationFinished() && processedAt == null) {
+            throw new IllegalArgumentException("processedAt is required once validation is finished");
         }
         if (version < 0) {
             throw new IllegalArgumentException("version must be >= 0");
@@ -186,7 +187,8 @@ public final class BulkFile {
     /**
      * Records that {@code itemCount} more items were processed. When the last
      * item is done the file moves to its target status and raises
-     * {@link BulkFileCompleted} or {@link BulkFileRejected}.
+     * {@link BulkFileRejected} when no item was accepted. A VALIDATED file raises
+     * nothing until a hand-off to initiation-settlement exists.
      */
     public void recordProcessedBatch(int itemCount, Instant now) {
         Objects.requireNonNull(now, "now");
@@ -209,9 +211,6 @@ public final class BulkFile {
         long nextVersion = version + 1;
         if (status == BulkFileStatus.REJECTED) {
             domainEvents.add(new BulkFileRejected(UUID.randomUUID(), fileId, nextVersion, now, totalCount, rejectedCount));
-        } else {
-            domainEvents.add(new BulkFileCompleted(UUID.randomUUID(), fileId, nextVersion, now, status, totalCount,
-                    acceptedCount, rejectedCount, acceptedAmount));
         }
     }
 
@@ -226,8 +225,14 @@ public final class BulkFile {
         return tppId.equals(candidateTppId);
     }
 
+    /** The file can no longer change (all items rejected). */
     public boolean isTerminal() {
         return status.isTerminal();
+    }
+
+    /** Every item has been validated (VALIDATED or REJECTED). */
+    public boolean isValidationFinished() {
+        return status.isValidationFinished();
     }
 
     public int remainingItems() {

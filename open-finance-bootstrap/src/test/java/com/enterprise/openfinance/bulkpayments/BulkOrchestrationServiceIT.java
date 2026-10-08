@@ -183,7 +183,7 @@ class BulkOrchestrationServiceIT {
 
         MvcResult statusResult = mvc.perform(asTpp(get("/open-finance/v1/file-payments/{id}", fileId)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.Data.Status").value("Completed"))
+                .andExpect(jsonPath("$.Data.Status").value("Validated"))
                 .andExpect(header().exists("ETag"))
                 .andReturn();
         MvcResult reportResult = mvc.perform(asTpp(get("/open-finance/v1/file-payments/{id}/report", fileId)))
@@ -201,10 +201,11 @@ class BulkOrchestrationServiceIT {
 
         List<String> eventTypes = jdbc.queryForList(
                 "select event_type from " + SCHEMA + ".outbox_event order by created_seq", String.class);
-        assertThat(eventTypes).containsExactly("Payments.BulkFile.Accepted.v1", "Payments.BulkFile.Completed.v1");
+        // Validated, not completed: no item has reached initiation-settlement, so only Accepted is published.
+        assertThat(eventTypes).containsExactly("Payments.BulkFile.Accepted.v1");
         List<String> correlation = jdbc.queryForList(
                 "select correlation_id from " + SCHEMA + ".outbox_event order by created_seq", String.class);
-        assertThat(correlation).containsExactly("ix-bulk-it", fileId);
+        assertThat(correlation).containsExactly("ix-bulk-it");
     }
 
     @Test
@@ -248,7 +249,7 @@ class BulkOrchestrationServiceIT {
 
         mvc.perform(asTpp(get("/open-finance/v1/file-payments/{id}/report", partialId)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.Data.Status").value("PartiallyAccepted"))
+                .andExpect(jsonPath("$.Data.Status").value("Validated"))
                 .andExpect(jsonPath("$.Data.Items[1].ErrorMessage").value("Invalid IBAN"));
         mvc.perform(asTpp(get("/open-finance/v1/file-payments/{id}/report", fullId)))
                 .andExpect(status().isOk())
@@ -258,6 +259,10 @@ class BulkOrchestrationServiceIT {
         assertThat(jdbc.queryForList("select event_type from " + SCHEMA + ".outbox_event where aggregate_id = ?"
                 + " order by created_seq", String.class, fullId))
                 .containsExactly("Payments.BulkFile.Accepted.v1", "Payments.BulkFile.Rejected.v1");
+        assertThat(jdbc.queryForList("select correlation_id from " + SCHEMA + ".outbox_event where aggregate_id = ?"
+                + " order by created_seq", String.class, fullId)).containsExactly("ix-bulk-it", fullId);
+        assertThat(jdbc.queryForList("select event_type from " + SCHEMA + ".outbox_event where aggregate_id = ?",
+                String.class, partialId)).containsExactly("Payments.BulkFile.Accepted.v1");
     }
 
     @Test
@@ -278,13 +283,14 @@ class BulkOrchestrationServiceIT {
 
         assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_item where file_id = ?"
                 + " and processed_at is null", Integer.class, fileId)).isZero();
-        String payload = jdbc.queryForObject("select payload::text from " + SCHEMA + ".outbox_event"
-                + " where event_type = 'Payments.BulkFile.Completed.v1'", String.class);
-        JsonNode data = json.readTree(payload).get("data");
-        assertThat(data.get("outcome").asText()).isEqualTo("PARTIALLY_ACCEPTED");
-        assertThat(data.get("acceptedCount").asInt()).isEqualTo(1_200);
-        assertThat(data.get("acceptedAmount").asText()).isEqualTo("1500.00");
-        assertThat(json.readTree(payload).get("aggregateVersion").asLong()).isEqualTo(3L);
+        var done = files.findById(fileId).orElseThrow();
+        assertThat(done.status().name()).isEqualTo("VALIDATED");
+        assertThat(done.acceptedCount()).isEqualTo(1_200);
+        assertThat(done.acceptedAmount()).isEqualByComparingTo("1500.00");
+        assertThat(done.version()).isEqualTo(3L);
+        // Items have not reached initiation-settlement, so no completion is published.
+        assertThat(jdbc.queryForList("select event_type from " + SCHEMA + ".outbox_event where aggregate_id = ?",
+                String.class, fileId)).containsExactly("Payments.BulkFile.Accepted.v1");
     }
 
     @Test
@@ -345,7 +351,7 @@ class BulkOrchestrationServiceIT {
     @Test
     @SuppressWarnings("unchecked")
     void relayPublishesTheOutboxToKafkaInOrder() throws Exception {
-        String fileId = upload("IDEMP-RELAY", csv("INS-1," + IBAN + ",10.00"), "PARTIAL_REJECTION");
+        String fileId = upload("IDEMP-RELAY", csv("INS-1,AE000,10.00"), "PARTIAL_REJECTION");
         processor.processNextBatch();
         when(kafka.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.completedFuture((SendResult<String, String>) null));
@@ -357,7 +363,7 @@ class BulkOrchestrationServiceIT {
         ArgumentCaptor<ProducerRecord<String, String>> sent = ArgumentCaptor.forClass(ProducerRecord.class);
         org.mockito.Mockito.verify(kafka, org.mockito.Mockito.times(2)).send(sent.capture());
         assertThat(sent.getAllValues()).extracting(ProducerRecord::topic)
-                .containsExactly("evt.pay.bulk.accepted.v1", "evt.pay.bulk.completed.v1");
+                .containsExactly("evt.pay.bulk.accepted.v1", "evt.pay.bulk.rejected.v1");
         assertThat(sent.getAllValues()).extracting(ProducerRecord::key).containsOnly(fileId);
         assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".outbox_event where status = 'PENDING'",
                 Integer.class)).isZero();

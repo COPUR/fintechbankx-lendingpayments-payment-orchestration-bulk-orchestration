@@ -26,7 +26,7 @@ class BulkFilePersistenceMapperTest {
         BulkFile back = BulkFilePersistenceMapper.toDomain(entity);
 
         assertThat(entity.getStatus()).isEqualTo("PROCESSING");
-        assertThat(entity.getTargetStatus()).isEqualTo("PARTIALLY_ACCEPTED");
+        assertThat(entity.getTargetStatus()).isEqualTo("VALIDATED");
         assertThat(entity.getIntegrityMode()).isEqualTo("FULL_REJECTION");
         assertThat(back.fileId()).isEqualTo("FILE-1");
         assertThat(back.consentId()).isEqualTo("CONS-1");
@@ -56,7 +56,7 @@ class BulkFilePersistenceMapperTest {
 
         BulkFilePersistenceMapper.copyProgress(file, entity);
 
-        assertThat(entity.getStatus()).isEqualTo("PARTIALLY_ACCEPTED");
+        assertThat(entity.getStatus()).isEqualTo("VALIDATED");
         assertThat(entity.getProcessedCount()).isEqualTo(2);
         assertThat(entity.getProcessedAt()).isEqualTo(AT.plusSeconds(5));
         assertThat(entity.getTotalCount()).isEqualTo(2);
@@ -66,7 +66,7 @@ class BulkFilePersistenceMapperTest {
         ParsedBulkFile parsed = new ParsedBulkFile(List.of(
                 BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", new BigDecimal("10.00")),
                 BulkItemResult.rejected(2, "INS-2", "AE000", new BigDecimal("20.00"), "Invalid IBAN")),
-                2, 1, 1, new BigDecimal("30.00"), new BigDecimal("10.00"), BulkFileStatus.PARTIALLY_ACCEPTED);
+                2, 1, 1, new BigDecimal("30.00"), new BigDecimal("10.00"), BulkFileStatus.VALIDATED);
         return BulkFile.accept("FILE-1", "CONS-1", "TPP-001", "IDEMP-1", "hash", "payroll.csv",
                 BulkIntegrityMode.FULL_REJECTION, parsed, AT);
     }

@@ -28,7 +28,7 @@ required value fails the render. Flyway creates `sc_pay_bulk_orchestration` on f
 ## 4. Events: relay stays off until the topics exist
 `OUTBOX_RELAY_ENABLED=false` by default. Events accumulate in `outbox_event` (gauge
 `outbox_pending_events`). The catalog PR for `evt.pay.bulk.accepted.v1`,
-`evt.pay.bulk.completed.v1` and `evt.pay.bulk.rejected.v1` (AsyncAPI
+`evt.pay.bulk.completed.v1` (contract only, not emitted yet) and `evt.pay.bulk.rejected.v1` (AsyncAPI
 `api/asyncapi/svc-pay-bulk-orchestration.yaml`) is **pending**. After it merges and the platform creates the topics
 (the service never auto-creates them), set `OUTBOX_RELAY_ENABLED=true`. Watch `outbox_parked_events`:
 a row that fails `max-attempts` (10) times is PARKED and does not block later rows.

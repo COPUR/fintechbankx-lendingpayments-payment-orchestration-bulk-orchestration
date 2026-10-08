@@ -43,8 +43,8 @@ class BulkPaymentsControllerUnitTest {
                 0,
                 Instant.parse("2026-02-09T10:00:00Z")
         ));
-        Mockito.when(useCase.getFileStatus(Mockito.any())).thenReturn(Optional.of(file("FILE-001", BulkFileStatus.PROCESSING, BulkFileStatus.PARTIALLY_ACCEPTED, 0, null)));
-        Mockito.when(useCase.getFileReport(Mockito.any())).thenReturn(Optional.of(report("FILE-001", BulkFileStatus.COMPLETED)));
+        Mockito.when(useCase.getFileStatus(Mockito.any())).thenReturn(Optional.of(file("FILE-001", BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 0, null)));
+        Mockito.when(useCase.getFileReport(Mockito.any())).thenReturn(Optional.of(report("FILE-001", BulkFileStatus.VALIDATED)));
 
         ResponseEntity<BulkUploadResponse> upload = controller.uploadFile(
                 "DPoP token",
@@ -84,8 +84,8 @@ class BulkPaymentsControllerUnitTest {
         BulkPaymentUseCase useCase = Mockito.mock(BulkPaymentUseCase.class);
         BulkPaymentsController controller = new BulkPaymentsController(useCase);
 
-        Mockito.when(useCase.getFileStatus(Mockito.any())).thenReturn(Optional.of(file("FILE-001", BulkFileStatus.PARTIALLY_ACCEPTED, BulkFileStatus.PARTIALLY_ACCEPTED, 2, Instant.parse("2026-02-09T10:00:02Z"))));
-        Mockito.when(useCase.getFileReport(Mockito.any())).thenReturn(Optional.of(report("FILE-001", BulkFileStatus.COMPLETED)));
+        Mockito.when(useCase.getFileStatus(Mockito.any())).thenReturn(Optional.of(file("FILE-001", BulkFileStatus.VALIDATED, BulkFileStatus.VALIDATED, 2, Instant.parse("2026-02-09T10:00:02Z"))));
+        Mockito.when(useCase.getFileReport(Mockito.any())).thenReturn(Optional.of(report("FILE-001", BulkFileStatus.VALIDATED)));
 
         ResponseEntity<BulkFileStatusResponse> statusFirst = controller.getFileStatus("DPoP token", "proof", "ix-1", "TPP-001", "FILE-001", null);
         ResponseEntity<BulkFileReportResponse> reportFirst = controller.getFileReport("DPoP token", "proof", "ix-1", "TPP-001", "FILE-001", null);

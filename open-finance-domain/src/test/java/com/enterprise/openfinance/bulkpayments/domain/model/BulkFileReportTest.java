@@ -15,7 +15,7 @@ class BulkFileReportTest {
     void shouldCreateReportAndExposeComputedFields() {
         BulkFileReport report = new BulkFileReport(
                 "FILE-001",
-                BulkFileStatus.PARTIALLY_ACCEPTED,
+                BulkFileStatus.VALIDATED,
                 2,
                 1,
                 1,
@@ -27,19 +27,19 @@ class BulkFileReportTest {
         );
 
         assertThat(report.fileId()).isEqualTo("FILE-001");
-        assertThat(report.status()).isEqualTo(BulkFileStatus.PARTIALLY_ACCEPTED);
+        assertThat(report.status()).isEqualTo(BulkFileStatus.VALIDATED);
         assertThat(report.items()).hasSize(2);
     }
 
     @Test
     void shouldRejectInvalidReport() {
-        assertInvalid("", BulkFileStatus.COMPLETED, 1, 1, 0, List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", new BigDecimal("10.00"))), Instant.parse("2026-02-09T10:00:00Z"), "fileId");
+        assertInvalid("", BulkFileStatus.VALIDATED, 1, 1, 0, List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", new BigDecimal("10.00"))), Instant.parse("2026-02-09T10:00:00Z"), "fileId");
         assertInvalid("FILE-001", null, 1, 1, 0, List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", new BigDecimal("10.00"))), Instant.parse("2026-02-09T10:00:00Z"), "status");
-        assertInvalid("FILE-001", BulkFileStatus.COMPLETED, 0, 0, 0, List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", new BigDecimal("10.00"))), Instant.parse("2026-02-09T10:00:00Z"), "totalCount");
-        assertInvalid("FILE-001", BulkFileStatus.COMPLETED, 1, 2, 0, List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", new BigDecimal("10.00"))), Instant.parse("2026-02-09T10:00:00Z"), "acceptedCount");
-        assertInvalid("FILE-001", BulkFileStatus.COMPLETED, 1, 1, 1, List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", new BigDecimal("10.00"))), Instant.parse("2026-02-09T10:00:00Z"), "rejectedCount");
-        assertInvalid("FILE-001", BulkFileStatus.COMPLETED, 1, 1, 0, null, Instant.parse("2026-02-09T10:00:00Z"), "items");
-        assertInvalid("FILE-001", BulkFileStatus.COMPLETED, 1, 1, 0, List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", new BigDecimal("10.00"))), null, "generatedAt");
+        assertInvalid("FILE-001", BulkFileStatus.VALIDATED, 0, 0, 0, List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", new BigDecimal("10.00"))), Instant.parse("2026-02-09T10:00:00Z"), "totalCount");
+        assertInvalid("FILE-001", BulkFileStatus.VALIDATED, 1, 2, 0, List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", new BigDecimal("10.00"))), Instant.parse("2026-02-09T10:00:00Z"), "acceptedCount");
+        assertInvalid("FILE-001", BulkFileStatus.VALIDATED, 1, 1, 1, List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", new BigDecimal("10.00"))), Instant.parse("2026-02-09T10:00:00Z"), "rejectedCount");
+        assertInvalid("FILE-001", BulkFileStatus.VALIDATED, 1, 1, 0, null, Instant.parse("2026-02-09T10:00:00Z"), "items");
+        assertInvalid("FILE-001", BulkFileStatus.VALIDATED, 1, 1, 0, List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", new BigDecimal("10.00"))), null, "generatedAt");
     }
 
     private static void assertInvalid(String fileId,

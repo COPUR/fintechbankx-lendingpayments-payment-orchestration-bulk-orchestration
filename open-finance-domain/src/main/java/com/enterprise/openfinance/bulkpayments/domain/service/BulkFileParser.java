@@ -103,14 +103,7 @@ public final class BulkFileParser {
                     BulkFileStatus.REJECTED);
         }
 
-        BulkFileStatus targetStatus;
-        if (rejected == 0) {
-            targetStatus = BulkFileStatus.COMPLETED;
-        } else if (accepted == 0) {
-            targetStatus = BulkFileStatus.REJECTED;
-        } else {
-            targetStatus = BulkFileStatus.PARTIALLY_ACCEPTED;
-        }
+        BulkFileStatus targetStatus = accepted == 0 ? BulkFileStatus.REJECTED : BulkFileStatus.VALIDATED;
         return new ParsedBulkFile(items, totalCount, accepted, rejected, totalAmount, acceptedAmount, targetStatus);
     }
 

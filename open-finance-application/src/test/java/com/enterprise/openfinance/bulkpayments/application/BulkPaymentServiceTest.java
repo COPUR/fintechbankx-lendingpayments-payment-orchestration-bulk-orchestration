@@ -2,7 +2,6 @@ package com.enterprise.openfinance.bulkpayments.application;
 
 import com.enterprise.openfinance.bulkpayments.domain.port.in.command.SubmitBulkFileCommand;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileAccepted;
-import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileCompleted;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileEvent;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileRejected;
 import com.enterprise.openfinance.bulkpayments.domain.exception.BusinessRuleViolationException;
@@ -87,15 +86,15 @@ class BulkPaymentServiceTest {
         assertThat(processor.processNextBatch()).isZero();
 
         BulkFile done = status(service, upload.fileId());
-        assertThat(done.status()).isEqualTo(BulkFileStatus.COMPLETED);
+        assertThat(done.status()).isEqualTo(BulkFileStatus.VALIDATED);
         assertThat(done.processedAt()).isEqualTo(Instant.now(CLOCK));
 
         BulkFileReport report = report(service, upload.fileId());
-        assertThat(report.status()).isEqualTo(BulkFileStatus.COMPLETED);
+        assertThat(report.status()).isEqualTo(BulkFileStatus.VALIDATED);
         assertThat(report.acceptedCount()).isEqualTo(1);
         assertThat(report.rejectedCount()).isZero();
-        assertThat(publisher.published).last().isInstanceOfSatisfying(BulkFileCompleted.class, event ->
-                assertThat(event.acceptedAmount()).isEqualByComparingTo("10.00"));
+        // No hand-off to initiation-settlement exists yet, so no completion is published.
+        assertThat(publisher.published).singleElement().isInstanceOf(BulkFileAccepted.class);
     }
 
     @Test
@@ -118,13 +117,11 @@ class BulkPaymentServiceTest {
         assertThat(processor.processNextBatch()).isZero();
 
         BulkFile done = status(service, upload.fileId());
-        assertThat(done.status()).isEqualTo(BulkFileStatus.PARTIALLY_ACCEPTED);
+        assertThat(done.status()).isEqualTo(BulkFileStatus.VALIDATED);
+        assertThat(done.acceptedCount()).isEqualTo(4);
+        assertThat(done.acceptedAmount()).isEqualByComparingTo("120.00");
         assertThat(itemPort.processed.get(upload.fileId())).containsExactlyInAnyOrder(1, 2, 3, 4, 5);
-        assertThat(publisher.published).last().isInstanceOfSatisfying(BulkFileCompleted.class, event -> {
-            assertThat(event.outcome()).isEqualTo(BulkFileStatus.PARTIALLY_ACCEPTED);
-            assertThat(event.acceptedCount()).isEqualTo(4);
-            assertThat(event.acceptedAmount()).isEqualByComparingTo("120.00");
-        });
+        assertThat(publisher.published).singleElement().isInstanceOf(BulkFileAccepted.class);
     }
 
     @Test
@@ -207,7 +204,7 @@ class BulkPaymentServiceTest {
         processor.processNextBatch();
         BulkFileReport partialReport = report(service, partial.fileId());
 
-        assertThat(partialReport.status()).isEqualTo(BulkFileStatus.PARTIALLY_ACCEPTED);
+        assertThat(partialReport.status()).isEqualTo(BulkFileStatus.VALIDATED);
         assertThat(partialReport.acceptedCount()).isEqualTo(1);
         assertThat(partialReport.rejectedCount()).isEqualTo(1);
 
@@ -278,18 +275,22 @@ class BulkPaymentServiceTest {
         BulkPaymentService service = service(settings(2));
         BulkFileProcessingService processor = processor(settings(2));
 
-        BulkUploadResult upload = service.submitFile(command("IDEMP-600",
+        BulkUploadResult validated = service.submitFile(command("IDEMP-600",
                 validCsv("INS-1," + IBAN + ",10.00"), BulkIntegrityMode.PARTIAL_REJECTION));
-
-        assertThat(report(service, upload.fileId()).status()).isEqualTo(BulkFileStatus.PROCESSING);
+        assertThat(report(service, validated.fileId()).status()).isEqualTo(BulkFileStatus.PROCESSING);
+        processor.processNextBatch();
+        // Validated files will still move once the hand-off exists, so their report is not cached.
+        assertThat(report(service, validated.fileId()).status()).isEqualTo(BulkFileStatus.VALIDATED);
         assertThat(cachePort.reportCache).isEmpty();
 
+        BulkUploadResult rejected = service.submitFile(command("IDEMP-601",
+                validCsv("INS-1,AE000,10.00"), BulkIntegrityMode.PARTIAL_REJECTION));
         processor.processNextBatch();
-        assertThat(report(service, upload.fileId()).status()).isEqualTo(BulkFileStatus.COMPLETED);
+        assertThat(report(service, rejected.fileId()).status()).isEqualTo(BulkFileStatus.REJECTED);
         assertThat(cachePort.reportCache).hasSize(1);
 
         itemPort.items.clear();
-        assertThat(report(service, upload.fileId()).items()).hasSize(1);
+        assertThat(report(service, rejected.fileId()).items()).hasSize(1);
     }
 
     @Test

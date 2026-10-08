@@ -7,15 +7,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 class BulkFileStatusTest {
 
     @Test
-    void shouldExposeApiValuesAndTerminalFlag() {
+    void apiValues() {
         assertThat(BulkFileStatus.PROCESSING.apiValue()).isEqualTo("Processing");
-        assertThat(BulkFileStatus.COMPLETED.apiValue()).isEqualTo("Completed");
-        assertThat(BulkFileStatus.PARTIALLY_ACCEPTED.apiValue()).isEqualTo("PartiallyAccepted");
+        assertThat(BulkFileStatus.VALIDATED.apiValue()).isEqualTo("Validated");
         assertThat(BulkFileStatus.REJECTED.apiValue()).isEqualTo("Rejected");
+    }
 
+    /** Until items reach initiation-settlement, a validated file is not complete and not final. */
+    @Test
+    void onlyRejectedIsFinalAndNothingClaimsCompletion() {
+        assertThat(BulkFileStatus.values()).extracting(Enum::name)
+                .containsExactly("PROCESSING", "VALIDATED", "REJECTED");
+        assertThat(BulkFileStatus.PROCESSING.isValidationFinished()).isFalse();
+        assertThat(BulkFileStatus.VALIDATED.isValidationFinished()).isTrue();
+        assertThat(BulkFileStatus.REJECTED.isValidationFinished()).isTrue();
         assertThat(BulkFileStatus.PROCESSING.isTerminal()).isFalse();
-        assertThat(BulkFileStatus.COMPLETED.isTerminal()).isTrue();
-        assertThat(BulkFileStatus.PARTIALLY_ACCEPTED.isTerminal()).isTrue();
+        assertThat(BulkFileStatus.VALIDATED.isTerminal()).isFalse();
         assertThat(BulkFileStatus.REJECTED.isTerminal()).isTrue();
     }
 }

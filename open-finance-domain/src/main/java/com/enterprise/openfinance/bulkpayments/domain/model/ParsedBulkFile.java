@@ -34,8 +34,8 @@ public record ParsedBulkFile(
         if (acceptedAmount == null || acceptedAmount.signum() < 0 || acceptedAmount.compareTo(totalAmount) > 0) {
             throw new IllegalArgumentException("acceptedAmount must be between zero and totalAmount");
         }
-        if (targetStatus == null || !targetStatus.isTerminal()) {
-            throw new IllegalArgumentException("targetStatus must be terminal");
+        if (targetStatus == null || !targetStatus.isValidationFinished()) {
+            throw new IllegalArgumentException("targetStatus must be VALIDATED or REJECTED");
         }
         items = List.copyOf(items);
     }

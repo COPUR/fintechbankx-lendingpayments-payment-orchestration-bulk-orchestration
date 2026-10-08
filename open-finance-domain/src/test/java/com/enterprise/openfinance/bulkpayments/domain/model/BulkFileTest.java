@@ -1,7 +1,6 @@
 package com.enterprise.openfinance.bulkpayments.domain.model;
 
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileAccepted;
-import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileCompleted;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileEvent;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileRejected;
 import com.enterprise.openfinance.bulkpayments.domain.exception.BusinessRuleViolationException;
@@ -22,7 +21,7 @@ class BulkFileTest {
 
     @Test
     void acceptRaisesAcceptedEventWithTheParsedFigures() {
-        BulkFile file = accept(parsed(3, 2, 1, "350.00", "300.00", BulkFileStatus.PARTIALLY_ACCEPTED));
+        BulkFile file = accept(parsed(3, 2, 1, "350.00", "300.00", BulkFileStatus.VALIDATED));
 
         assertThat(file.status()).isEqualTo(BulkFileStatus.PROCESSING);
         assertThat(file.processedCount()).isZero();
@@ -45,8 +44,8 @@ class BulkFileTest {
     }
 
     @Test
-    void staysProcessingUntilTheLastBatchThenCompletesPartially() {
-        BulkFile file = accept(parsed(3, 2, 1, "350.00", "300.00", BulkFileStatus.PARTIALLY_ACCEPTED));
+    void staysProcessingUntilTheLastBatchThenIsValidatedWithoutClaimingCompletion() {
+        BulkFile file = accept(parsed(3, 2, 1, "350.00", "300.00", BulkFileStatus.VALIDATED));
         file.pullDomainEvents();
 
         file.recordProcessedBatch(2, BATCH_1);
@@ -58,16 +57,12 @@ class BulkFileTest {
         BulkFile stored = rehydrateAsStored(file, 1L);
         stored.recordProcessedBatch(1, BATCH_2);
 
-        assertThat(stored.status()).isEqualTo(BulkFileStatus.PARTIALLY_ACCEPTED);
-        assertThat(stored.isTerminal()).isTrue();
+        assertThat(stored.status()).isEqualTo(BulkFileStatus.VALIDATED);
+        assertThat(stored.isValidationFinished()).isTrue();
+        assertThat(stored.isTerminal()).isFalse();
         assertThat(stored.processedAt()).isEqualTo(BATCH_2);
-        assertThat(stored.pullDomainEvents()).singleElement().isInstanceOfSatisfying(BulkFileCompleted.class, event -> {
-            assertThat(event.outcome()).isEqualTo(BulkFileStatus.PARTIALLY_ACCEPTED);
-            assertThat(event.aggregateVersion()).isEqualTo(2L);
-            assertThat(event.acceptedCount()).isEqualTo(2);
-            assertThat(event.rejectedCount()).isEqualTo(1);
-            assertThat(event.acceptedAmount()).isEqualByComparingTo("300.00");
-        });
+        // No item has reached initiation-settlement, so nothing is published as completed.
+        assertThat(stored.pullDomainEvents()).isEmpty();
     }
 
     @Test
@@ -87,7 +82,7 @@ class BulkFileTest {
 
     @Test
     void rejectsProcessingMoreItemsThanRemainOrAfterTheFileIsDone() {
-        BulkFile file = accept(parsed(2, 2, 0, "20.00", "20.00", BulkFileStatus.COMPLETED));
+        BulkFile file = accept(parsed(2, 2, 0, "20.00", "20.00", BulkFileStatus.VALIDATED));
 
         assertThatThrownBy(() -> file.recordProcessedBatch(3, BATCH_1))
                 .isInstanceOf(BusinessRuleViolationException.class)
@@ -96,7 +91,7 @@ class BulkFileTest {
                 .isInstanceOf(IllegalArgumentException.class);
 
         file.recordProcessedBatch(2, BATCH_1);
-        assertThat(file.status()).isEqualTo(BulkFileStatus.COMPLETED);
+        assertThat(file.status()).isEqualTo(BulkFileStatus.VALIDATED);
         assertThatThrownBy(() -> file.recordProcessedBatch(1, BATCH_2))
                 .isInstanceOf(BusinessRuleViolationException.class)
                 .hasMessageContaining("is not processing");
@@ -104,7 +99,7 @@ class BulkFileTest {
 
     @Test
     void ownershipIsCheckedAgainstTheUploadingTpp() {
-        BulkFile file = accept(parsed(1, 1, 0, "10.00", "10.00", BulkFileStatus.COMPLETED));
+        BulkFile file = accept(parsed(1, 1, 0, "10.00", "10.00", BulkFileStatus.VALIDATED));
 
         assertThat(file.belongsToTpp("TPP-001")).isTrue();
         assertThat(file.belongsToTpp("TPP-999")).isFalse();
@@ -112,21 +107,21 @@ class BulkFileTest {
 
     @Test
     void rehydrateGuardsEveryInvariant() {
-        assertInvalid("", BulkFileStatus.PROCESSING, BulkFileStatus.COMPLETED, 0, 1, 1, 0, "10.00", "10.00", UPLOADED, null, 0, "fileId");
-        assertInvalid("FILE", null, BulkFileStatus.COMPLETED, 0, 1, 1, 0, "10.00", "10.00", UPLOADED, null, 0, "status");
+        assertInvalid("", BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 0, 1, 1, 0, "10.00", "10.00", UPLOADED, null, 0, "fileId");
+        assertInvalid("FILE", null, BulkFileStatus.VALIDATED, 0, 1, 1, 0, "10.00", "10.00", UPLOADED, null, 0, "status");
         assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.PROCESSING, 0, 1, 1, 0, "10.00", "10.00", UPLOADED, null, 0, "targetStatus");
-        assertInvalid("FILE", BulkFileStatus.REJECTED, BulkFileStatus.COMPLETED, 1, 1, 1, 0, "10.00", "10.00", UPLOADED, BATCH_1, 0, "status must be PROCESSING");
-        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.COMPLETED, 0, 0, 0, 0, "10.00", "10.00", UPLOADED, null, 0, "totalCount");
-        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.COMPLETED, 2, 1, 1, 0, "10.00", "10.00", UPLOADED, null, 0, "processedCount out of range");
-        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.COMPLETED, 1, 1, 1, 0, "10.00", "10.00", UPLOADED, null, 0, "processedCount must equal totalCount");
-        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.COMPLETED, 0, 1, 2, 0, "10.00", "10.00", UPLOADED, null, 0, "acceptedCount");
-        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.COMPLETED, 0, 1, 1, -1, "10.00", "10.00", UPLOADED, null, 0, "rejectedCount");
-        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.COMPLETED, 0, 2, 1, 0, "10.00", "10.00", UPLOADED, null, 0, "must equal totalCount");
-        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.COMPLETED, 0, 1, 1, 0, "0.00", "0.00", UPLOADED, null, 0, "totalAmount");
-        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.COMPLETED, 0, 1, 1, 0, "10.00", "10.01", UPLOADED, null, 0, "acceptedAmount");
-        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.COMPLETED, 0, 1, 1, 0, "10.00", "10.00", null, null, 0, "createdAt");
-        assertInvalid("FILE", BulkFileStatus.COMPLETED, BulkFileStatus.COMPLETED, 1, 1, 1, 0, "10.00", "10.00", UPLOADED, null, 0, "processedAt");
-        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.COMPLETED, 0, 1, 1, 0, "10.00", "10.00", UPLOADED, null, -1, "version");
+        assertInvalid("FILE", BulkFileStatus.REJECTED, BulkFileStatus.VALIDATED, 1, 1, 1, 0, "10.00", "10.00", UPLOADED, BATCH_1, 0, "status must be PROCESSING");
+        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 0, 0, 0, 0, "10.00", "10.00", UPLOADED, null, 0, "totalCount");
+        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 2, 1, 1, 0, "10.00", "10.00", UPLOADED, null, 0, "processedCount out of range");
+        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 1, 1, 1, 0, "10.00", "10.00", UPLOADED, null, 0, "processedCount must equal totalCount");
+        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 0, 1, 2, 0, "10.00", "10.00", UPLOADED, null, 0, "acceptedCount");
+        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 0, 1, 1, -1, "10.00", "10.00", UPLOADED, null, 0, "rejectedCount");
+        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 0, 2, 1, 0, "10.00", "10.00", UPLOADED, null, 0, "must equal totalCount");
+        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 0, 1, 1, 0, "0.00", "0.00", UPLOADED, null, 0, "totalAmount");
+        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 0, 1, 1, 0, "10.00", "10.01", UPLOADED, null, 0, "acceptedAmount");
+        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 0, 1, 1, 0, "10.00", "10.00", null, null, 0, "createdAt");
+        assertInvalid("FILE", BulkFileStatus.VALIDATED, BulkFileStatus.VALIDATED, 1, 1, 1, 0, "10.00", "10.00", UPLOADED, null, 0, "processedAt");
+        assertInvalid("FILE", BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 0, 1, 1, 0, "10.00", "10.00", UPLOADED, null, -1, "version");
     }
 
     private static BulkFile accept(ParsedBulkFile parsed) {

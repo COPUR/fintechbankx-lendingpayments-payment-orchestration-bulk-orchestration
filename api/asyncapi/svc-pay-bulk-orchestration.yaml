@@ -16,6 +16,8 @@ info:
 
     Status: Proposed. Owner: Recurring and Bulk Payments Squad, Lending and Payments Tribe. Event namespace: `evt.pay.bulk`.
 
+    Emitted today: Accepted (upload) and Rejected (every item rejected). A file whose items are validated with at least one accepted becomes VALIDATED and raises no event; Completed is reserved (x-emitted: false) until items are handed to svc-pay-initiation-settlement.
+
     Events are raised by the BulkFile aggregate and written through a transactional outbox (sc_pay_bulk_orchestration.outbox_event) in the same transaction as the file; a relay publishes them in order. The record key is the aggregateId (the file id). Payloads carry ids, counts and amounts only; payee IBANs and item lines are never published (read them from GET /open-finance/v1/file-payments/{fileId}/report).
 
     Amounts are decimal strings with at least two decimals and no rounding. The upload CSV carries no currency; the currency is not part of v1 (open question in the runbook).
@@ -60,7 +62,12 @@ channels:
   fileCompleted:
     address: evt.pay.bulk.completed.v1
     title: evt.pay.bulk.completed.v1
-    description: Payments.BulkFile.Completed.v1. Every item of the file was processed and at least one item was accepted (outcome COMPLETED or PARTIALLY_ACCEPTED).
+    description: >-
+      Payments.BulkFile.Completed.v1. NOT YET EMITTED. Reserved for when the accepted items of a
+      file have been handed to and settled by svc-pay-initiation-settlement. Today no item reaches
+      initiation-settlement, so a fully validated file stays VALIDATED and nothing is published here
+      (how items reach initiation-settlement is an open question with the owner).
+    x-emitted: false
     messages:
       BulkFileCompleted:
         $ref: '#/components/messages/BulkFileCompleted'
@@ -104,8 +111,9 @@ operations:
     - $ref: '#/channels/fileAccepted/messages/BulkFileAccepted'
   publishBulkFileCompleted:
     action: send
-    title: Publish Payments.BulkFile.Completed.v1
-    summary: svc-pay-bulk-orchestration publishes Payments.BulkFile.Completed.v1 through its transactional outbox.
+    title: Publish Payments.BulkFile.Completed.v1 (not yet emitted)
+    summary: Planned. Not emitted until a hand-off of accepted items to svc-pay-initiation-settlement exists.
+    x-emitted: false
     channel:
       $ref: '#/channels/fileCompleted'
     messages:

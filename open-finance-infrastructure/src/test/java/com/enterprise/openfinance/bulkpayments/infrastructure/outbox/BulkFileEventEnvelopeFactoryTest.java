@@ -1,7 +1,6 @@
 package com.enterprise.openfinance.bulkpayments.infrastructure.outbox;
 
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileAccepted;
-import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileCompleted;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileRejected;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileStatus;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkIntegrityMode;
@@ -55,17 +54,7 @@ class BulkFileEventEnvelopeFactoryTest {
     }
 
     @Test
-    void completedAndRejectedEnvelopes() throws Exception {
-        OutboxEventJpaEntity completed = factory.toOutboxRow(new BulkFileCompleted(UUID.randomUUID(), "FILE-1", 3L,
-                AT, BulkFileStatus.PARTIALLY_ACCEPTED, 3, 2, 1, new BigDecimal("2510.3550")), "FILE-1");
-        assertThat(completed.getTopic()).isEqualTo("evt.pay.bulk.completed.v1");
-        assertThat(completed.getEventType()).isEqualTo("Payments.BulkFile.Completed.v1");
-        JsonNode data = json.readTree(completed.getPayload()).get("data");
-        assertThat(data.get("outcome").asText()).isEqualTo("PARTIALLY_ACCEPTED");
-        assertThat(data.get("acceptedAmount").asText()).isEqualTo("2510.355");
-        assertThat(data.get("completedAt").asText()).isEqualTo("2026-02-09T10:00:00Z");
-        assertThat(completed.getAggregateVersion()).isEqualTo(3L);
-
+    void rejectedEnvelope() throws Exception {
         OutboxEventJpaEntity rejected = factory.toOutboxRow(new BulkFileRejected(UUID.randomUUID(), "FILE-2", 1L, AT,
                 2, 2), "FILE-2");
         assertThat(rejected.getTopic()).isEqualTo("evt.pay.bulk.rejected.v1");
@@ -79,8 +68,6 @@ class BulkFileEventEnvelopeFactoryTest {
         List<OutboxEventJpaEntity> rows = List.of(
                 factory.toOutboxRow(new BulkFileAccepted(UUID.randomUUID(), "F", 0L, AT, "C", "T",
                         BulkIntegrityMode.FULL_REJECTION, 1, 1, 0, BigDecimal.ONE), "F"),
-                factory.toOutboxRow(new BulkFileCompleted(UUID.randomUUID(), "F", 1L, AT, BulkFileStatus.COMPLETED,
-                        1, 1, 0, BigDecimal.ONE), "F"),
                 factory.toOutboxRow(new BulkFileRejected(UUID.randomUUID(), "F", 1L, AT, 1, 1), "F"));
 
         for (OutboxEventJpaEntity row : rows) {

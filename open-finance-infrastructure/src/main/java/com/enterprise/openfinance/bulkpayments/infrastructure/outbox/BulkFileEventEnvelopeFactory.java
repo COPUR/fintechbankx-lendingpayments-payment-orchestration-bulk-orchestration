@@ -1,7 +1,6 @@
 package com.enterprise.openfinance.bulkpayments.infrastructure.outbox;
 
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileAccepted;
-import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileCompleted;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileEvent;
 import com.enterprise.openfinance.bulkpayments.domain.event.BulkFileRejected;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -58,14 +57,6 @@ public class BulkFileEventEnvelopeFactory {
                     "acceptedCount", e.acceptedCount(),
                     "rejectedCount", e.rejectedCount(),
                     "totalAmount", amount(e.totalAmount())));
-            case BulkFileCompleted e -> new PublicEvent("completed", "Completed", data(
-                    "fileId", e.fileId(),
-                    "outcome", e.outcome().name(),
-                    "totalCount", e.totalCount(),
-                    "acceptedCount", e.acceptedCount(),
-                    "rejectedCount", e.rejectedCount(),
-                    "acceptedAmount", amount(e.acceptedAmount()),
-                    "completedAt", e.occurredAt().toString()));
             case BulkFileRejected e -> new PublicEvent("rejected", "Rejected", data(
                     "fileId", e.fileId(),
                     "totalCount", e.totalCount(),

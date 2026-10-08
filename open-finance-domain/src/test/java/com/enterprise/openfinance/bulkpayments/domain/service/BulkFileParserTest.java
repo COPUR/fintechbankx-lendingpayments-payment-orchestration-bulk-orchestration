@@ -27,7 +27,7 @@ class BulkFileParserTest {
         assertThat(parsed.rejectedCount()).isZero();
         assertThat(parsed.totalAmount()).isEqualByComparingTo("2510.355");
         assertThat(parsed.acceptedAmount()).isEqualByComparingTo("2510.355");
-        assertThat(parsed.targetStatus()).isEqualTo(BulkFileStatus.COMPLETED);
+        assertThat(parsed.targetStatus()).isEqualTo(BulkFileStatus.VALIDATED);
         assertThat(parsed.items()).extracting("lineNumber").containsExactly(1, 2, 3);
     }
 
@@ -37,7 +37,7 @@ class BulkFileParserTest {
                 "INS-1," + GOOD_IBAN + ",10.00",
                 "INS-2,AE000,20.00"), BulkIntegrityMode.PARTIAL_REJECTION);
 
-        assertThat(parsed.targetStatus()).isEqualTo(BulkFileStatus.PARTIALLY_ACCEPTED);
+        assertThat(parsed.targetStatus()).isEqualTo(BulkFileStatus.VALIDATED);
         assertThat(parsed.acceptedCount()).isEqualTo(1);
         assertThat(parsed.rejectedCount()).isEqualTo(1);
         assertThat(parsed.totalAmount()).isEqualByComparingTo("30.00");
