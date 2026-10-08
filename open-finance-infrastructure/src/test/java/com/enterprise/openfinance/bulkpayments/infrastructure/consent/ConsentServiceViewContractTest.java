@@ -16,11 +16,13 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 /**
  * Consumer contract with consent-authorization-service (fintechbankx-openfinance-consent-auth-service,
- * branch claude/openfinance-deployable-ra36dq at c20d4d9):
- * GET /api/v1/consents/{id} returns {@code ConsentServiceView}
- * (infrastructure/rest/dto/ConsentServiceView.java) and the scope names are the provider's
- * {@code Consent.SUPPORTED_SCOPES}. The fixtures below are copied from there; when the provider
- * changes, update them from its source and this test shows what breaks here.
+ * consent-auth #13, branch claude/openfinance-deployable-ra36dq at fdaf8e7):
+ * GET /api/v1/consents/{id} (ConsentServiceViewController) returns {@code ConsentServiceView}
+ * (infrastructure/rest/dto/ConsentServiceView.java, unchanged since c20d4d9) or 404 for an unknown id;
+ * the status names are the provider's {@code ConsentStatus} and the scope names its
+ * {@code Consent.SUPPORTED_SCOPES} (READMETADATA added since c20d4d9; not used here). The provider's
+ * openfinance.consent.service-callers lists svc-pay-bulk-orchestration. The fixtures below are copied
+ * from there; when the provider changes, update them from its source and this test shows what breaks here.
  */
 class ConsentServiceViewContractTest {
 
@@ -32,7 +34,10 @@ class ConsentServiceViewContractTest {
     static final Set<String> PROVIDER_SCOPES = Set.of(
             "READACCOUNTS", "READBALANCES", "READTRANSACTIONS", "READBENEFICIARIES", "READDIRECTDEBITS",
             "READSTANDINGORDERS", "READPARTIES", "READSCHEDULEDPAYMENTS", "INITIATEPAYMENTS",
-            "INITIATEBULKPAYMENTS", "INITIATEVRP", "READPOLICIES", "READPRODUCTS", "READATMS");
+            "INITIATEBULKPAYMENTS", "INITIATEVRP", "READPOLICIES", "READPRODUCTS", "READATMS", "READMETADATA");
+
+    /** Provider ConsentStatus. */
+    static final Set<String> PROVIDER_STATUSES = Set.of("PENDING", "AUTHORIZED", "REVOKED", "EXPIRED");
 
     /** An authorised bulk consent as the provider serialises it (scopes and accountIds sorted). */
     static final String AUTHORISED_BULK_CONSENT = """
@@ -72,6 +77,34 @@ class ConsentServiceViewContractTest {
         assertThat(consent.isAuthorized()).isTrue();
         assertThat(consent.belongsToTpp("TPP-001")).isTrue();
         server.verify();
+    }
+
+    @Test
+    void anExpiredConsentAsTheProviderSerialisesItIsNotUsable() {
+        // ConsentServiceView.from moves a lapsed consent to EXPIRED and sets usable=false.
+        server.expect(requestTo(BASE + "/api/v1/consents/CONSENT-6F1C"))
+                .andRespond(withSuccess(AUTHORISED_BULK_CONSENT.replace("\"AUTHORIZED\"", "\"EXPIRED\"")
+                        .replace("\"usable\":true", "\"usable\":false"), MediaType.APPLICATION_JSON));
+
+        BulkConsentContext consent = adapter.findById("CONSENT-6F1C").orElseThrow();
+
+        assertThat(consent.isAuthorized()).as("usable=false is authoritative").isFalse();
+        server.verify();
+    }
+
+    @Test
+    void anUnknownConsentIsTheProviders404() {
+        server.expect(requestTo(BASE + "/api/v1/consents/CONSENT-NONE"))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withStatus(org.springframework.http.HttpStatus.NOT_FOUND));
+
+        assertThat(adapter.findById("CONSENT-NONE")).isEmpty();
+        server.verify();
+    }
+
+    @Test
+    void theFixtureStatusIsOneTheProviderSerialises() {
+        assertThat(PROVIDER_STATUSES).contains("AUTHORIZED", "EXPIRED");
     }
 
     @Test
