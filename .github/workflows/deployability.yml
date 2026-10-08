@@ -40,6 +40,7 @@ jobs:
           args="--set image.repository=ci/payment-bulk-orchestration-service --set image.tag=${{ github.sha }}"
           args="$args --set externalSecret.remoteSecretName=dev/payment-bulk-orchestration-service/db-app"
           args="$args --set externalSecret.serviceClientSecretName=dev/payment-bulk-orchestration-service/oidc-client"
+          args="$args --set migration.remoteSecretName=dev/payment-bulk-orchestration-service/db-migration"
           args="$args --set-string config.DB_URL=jdbc:postgresql://ci-db:5432/db_pay_bulk_orchestration_ci?sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem"
           args="$args --set config.KAFKA_BOOTSTRAP_SERVERS=ci-kafka:9098"
           args="$args --set config.OIDC_ISSUER_URI=https://ci-idp/realms/fintechbankx"
@@ -54,6 +55,17 @@ jobs:
           grep -q "mountPath: /etc/ssl/rds" <<<"$(helm template ci "$chart" --namespace payments $args)"
           if helm template ci "$chart" $args --set-string config.DB_URL=jdbc:postgresql://ci-db:5432/db?sslmode=require > /dev/null 2>&1; then
             echo "chart rendered a DB_URL without sslmode=verify-full and the RDS CA bundle" >&2; exit 1
+          fi
+          # Flyway runs only in the hook Job, as the schema owner; the pods never get that secret.
+          job="$(helm template ci "$chart" --namespace payments $args --show-only templates/migration-job.yaml)"
+          grep -q 'helm.sh/hook: pre-install,pre-upgrade' <<<"$job"
+          grep -q 'args: \["migrate"\]' <<<"$job"
+          grep -q 'key: dev/payment-bulk-orchestration-service/db-migration' <<<"$job"
+          deployment="$(helm template ci "$chart" --namespace payments $args --show-only templates/deployment.yaml)"
+          grep -A1 'name: SPRING_FLYWAY_ENABLED' <<<"$deployment" | grep -q 'value: "false"'
+          if grep -q 'db-migration' <<<"$deployment"; then echo "the service pods reference the migration secret" >&2; exit 1; fi
+          if helm template ci "$chart" $args --set migration.remoteSecretName= > /dev/null 2>&1; then
+            echo "chart rendered without the migration secret" >&2; exit 1
           fi
           # Platform admission policy: every ExternalSecret carries
           # app.kubernetes.io/name=<service account> and reads only <env>/<service account>/.
@@ -73,7 +85,8 @@ jobs:
           # A missing required value must fail the render.
           if helm template ci "$chart" --set image.repository=x --set image.tag=y \
                --set externalSecret.remoteSecretName=dev/payment-bulk-orchestration-service/db-app \
-               --set externalSecret.serviceClientSecretName=dev/payment-bulk-orchestration-service/oidc-client > /dev/null 2>&1; then
+               --set externalSecret.serviceClientSecretName=dev/payment-bulk-orchestration-service/oidc-client \
+               --set migration.remoteSecretName=dev/payment-bulk-orchestration-service/db-migration > /dev/null 2>&1; then
             echo "chart rendered without required config"; exit 1
           fi
 

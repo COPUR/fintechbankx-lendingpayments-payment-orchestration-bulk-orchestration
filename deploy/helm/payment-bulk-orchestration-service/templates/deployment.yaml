@@ -66,15 +66,12 @@ spec:
               containerPort: {{ .Values.service.port }}
             - name: http-management
               containerPort: {{ .Values.service.managementPort }}
-          envFrom:
-            - configMapRef:
-                name: {{ include "bulk.name" . }}
-            {{- if .Values.externalSecret.enabled }}
-            - secretRef:
-                name: {{ include "bulk.secretName" . }}
-            {{- end }}
-          {{- if .Values.kafkaStrimzi.enabled }}
           env:
+            # Migrations run only in the pre-install/pre-upgrade Job as the
+            # schema owner; the pods hold the runtime role and never migrate.
+            - name: SPRING_FLYWAY_ENABLED
+              value: "false"
+          {{- if .Values.kafkaStrimzi.enabled }}
             - name: SPRING_PROFILES_ACTIVE
               value: kafka-strimzi
             - name: KAFKA_SECURITY_PROTOCOL
@@ -95,6 +92,13 @@ spec:
                   name: {{ .Values.kafkaStrimzi.tlsSecretName }}
                   key: ca.crt
           {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "bulk.name" . }}
+            {{- if .Values.externalSecret.enabled }}
+            - secretRef:
+                name: {{ include "bulk.secretName" . }}
+            {{- end }}
           startupProbe:
             httpGet:
               path: /actuator/health/liveness

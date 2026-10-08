@@ -174,13 +174,27 @@ resource "aws_rds_cluster_instance" "database" {
   }
 }
 
-# Application credential (role payment_bulk_app, owner of schema
-# sc_pay_bulk_orchestration). The DBA bootstrap in the runbook creates the role
-# and writes {"username", "password"} here; Terraform never sees the value.
+# Database roles (platform contract "Database roles"): the DBA bootstrap in
+# docs/migration creates both roles and the schema and writes
+# {"username", "password"} into these containers; Terraform never sees the
+# values. Names match the terraform-modules aurora-postgresql module
+# (app_secret_name, migration_secret_name) and the ESO path
+# <env>/<service account>/. Read by External Secrets Operator, not by the pods.
+#
+# Runtime role payment_bulk_app: DML only (V11), read by the pods' ExternalSecret.
 resource "aws_secretsmanager_secret" "app_database" {
   # <env>/<service account>/db-app; "<env>-<slug>/db-app" would be refused by ESO.
   name                    = "${var.environment}/${local.service_slug}/db-app"
-  description             = "Application database credential for ${local.service_id}"
+  description             = "Runtime (DML-only) database credential for ${local.service_id}"
+  kms_key_id              = aws_kms_key.database.arn
+  recovery_window_in_days = 7
+}
+
+# Schema owner payment_bulk_owner (owns sc_pay_bulk_orchestration): used only
+# by the Flyway Helm hook Job; never mounted by the service pods.
+resource "aws_secretsmanager_secret" "migration_database" {
+  name                    = "${var.environment}/${local.service_slug}/db-migration"
+  description             = "Schema-owner (Flyway) database credential for ${local.service_id}"
   kms_key_id              = aws_kms_key.database.arn
   recovery_window_in_days = 7
 }

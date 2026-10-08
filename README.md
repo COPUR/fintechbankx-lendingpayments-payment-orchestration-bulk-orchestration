@@ -119,7 +119,12 @@ TEST_DB_URL=jdbc:postgresql://localhost:5432/<db> TEST_DB_USERNAME=<user> TEST_D
 Local boot without Kafka: set `DB_URL`, `DB_USERNAME`, `SPRING_DATASOURCE_PASSWORD`,
 `CONSENT_ADAPTER=in-memory` and keep `OUTBOX_RELAY_ENABLED=false` (and `DPOP_REQUIRED=false` to call it with plain Bearer tokens), then
 `java -jar open-finance-bootstrap/build/libs/payment-bulk-orchestration-service.jar`
-(API on 8080, management on 8081).
+(API on 8080, management on 8081). The schema `sc_pay_bulk_orchestration` must exist (Flyway does not create
+it); single-user, Flyway runs in-process as that user and V11 only logs that privileges are not separated.
+
+Database roles: the pods connect as the DML-only runtime role (`DB_USERNAME`, secret `db-app`) with
+`SPRING_FLYWAY_ENABLED=false`; migrations run as the schema owner in a Helm pre-install/pre-upgrade Job
+(`java -jar ... migrate`, secret `db-migration`). See the runbook, section 2.
 
 Deployed, the pods verify Aurora's certificate: `DB_URL` must carry
 `sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem` (Terraform output

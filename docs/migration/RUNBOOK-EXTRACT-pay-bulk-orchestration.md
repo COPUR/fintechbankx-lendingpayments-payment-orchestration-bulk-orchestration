@@ -56,14 +56,39 @@ Cross-repo prerequisites, in this order (each must be done before the next start
      `cluster.local/ns/istio-ingress/sa/istio-ingressgateway`; inbound to consent-authorization-service from
      `cluster.local/ns/payments/sa/payment-bulk-orchestration-service`.
 4. **Platform**: Aurora PostgreSQL, the KMS key, the secrets `<env>/payment-bulk-orchestration-service/db-app`
-   (runtime role), `<env>/payment-bulk-orchestration-service/db-migration` (schema owner, Flyway only) and
-   `.../oidc-client`, the IRSA role and the MSK policy, from `deploy/terraform` (plan reviewed before anyone
-   applies). DBA bootstrap creates the two roles. The DB/secret/TLS wiring of the chart and Terraform (Flyway
-   pre-install/pre-upgrade Job with db-migration only, app pods with db-app only and
-   `spring.flyway.enabled=false`, JDBC `sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem` from the
-   `rds-ca-bundle` ConfigMap) is owned by the platform round on this branch.
-   Pending on the platform side, not worked around here: microservice-base's runtime-secret rename and its
-   `timestamp()` removal (terraform-modules #11).
+   (runtime role), `<env>/payment-bulk-orchestration-service/db-migration` (schema owner, Flyway Job only) and
+   `<env>/payment-bulk-orchestration-service/oidc-client`, the IRSA role and the MSK policy, from `deploy/terraform`
+   (plan reviewed before anyone applies). ESO may read only `<env>/<service account>/`; the chart refuses any other
+   key and any ExternalSecret whose `app.kubernetes.io/name` is not the service account. Then the DBA bootstrap
+   below. `config.DB_URL` is the Terraform output `jdbc_url`
+   (`sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem`; the chart refuses anything else and mounts
+   ConfigMap `rds-ca-bundle`, which trust-manager must have published in `payments`); `migration.remoteSecretName`
+   is the output `migration_db_secret_name`.
+   Pending on the platform side, not worked around here: microservice-base (terraform-modules, ref=main) still
+   names its runtime secret `<env>-<slug>/runtime` and uses `timestamp()` in tags (terraform-modules #11).
+
+   **Database roles**
+
+   | Role | Secret | Used by | Rights |
+   |---|---|---|---|
+   | `payment_bulk_owner` | `<env>/payment-bulk-orchestration-service/db-migration` | Helm pre-install/pre-upgrade Job `payment-bulk-orchestration-service-db-migration` (image with `migrate`, `SPRING_FLYWAY_USER` / `SPRING_FLYWAY_PASSWORD`), deleted with its ExternalSecret when it succeeds | owns `sc_pay_bulk_orchestration` and every table (DDL) |
+   | `payment_bulk_app` (`DB_USERNAME`) | `<env>/payment-bulk-orchestration-service/db-app` | the service pods (`SPRING_FLYWAY_ENABLED=false`) | `V11`: USAGE on the schema; `bulk_file`, `bulk_item` SELECT/INSERT/UPDATE; `bulk_idempotency`, `bulk_consent_binding` SELECT/INSERT; `outbox_event` SELECT/INSERT/UPDATE/DELETE plus USAGE on its `created_seq` sequence; `dpop_proof_jti` SELECT/INSERT/DELETE. Default privileges give it DML (never TRUNCATE) on tables the owner creates later. No DDL, no Flyway history (`BulkOrchestrationServiceIT.theRuntimeRoleCannotRunDdlOrDeleteFilesItemsOrBindings`) |
+
+   DBA bootstrap, once per environment, as the RDS master user (`master_user_secret_arn`), before the first
+   install (Flyway does not create the schema, `create-schemas: false`):
+
+   ```sql
+   CREATE ROLE payment_bulk_owner LOGIN PASSWORD '<from a password generator>';
+   CREATE ROLE payment_bulk_app LOGIN PASSWORD '<from a password generator>';
+   GRANT CONNECT ON DATABASE db_pay_bulk_orchestration_<env> TO payment_bulk_owner, payment_bulk_app;
+   REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+   CREATE SCHEMA sc_pay_bulk_orchestration AUTHORIZATION payment_bulk_owner;
+   REVOKE ALL ON SCHEMA sc_pay_bulk_orchestration FROM PUBLIC;
+   ```
+
+   Then put `{"username","password"}` of each role into its secret (`aws secretsmanager put-secret-value`). The
+   first install's pre-install Job runs V1 to V11 as the owner; V11 grants the runtime role. Rollback: uninstall
+   the chart, then `DROP SCHEMA sc_pay_bulk_orchestration CASCADE` and recreate it as above.
 5. **Smoke upload** in the target environment (section 3, step 6).
 6. **Route switch** (section 3, step 8).
 
@@ -81,7 +106,7 @@ not go ahead.
 | 1 | Freeze scope; confirm the known gap is closed or formally accepted | Bulk squad, compliance | Signed scope checklist | Gap neither closed nor accepted |
 | 2 | Contracts merged (OpenAPI, AsyncAPI catalog PR #13) | Bulk squad, contracts | Contract tests green (`OpenApiContractTest`, `AsyncApiContractTest`, `ConsentServiceViewContractTest`) | Contract mismatch |
 | 3 | Cross-repo prerequisites 1 to 4 (section 2), in order | Consent owner, identity, mesh, platform | Each one confirmed in its own repo / ticket | Any prerequisite missing |
-| 4 | Deploy with `helm upgrade --install payment-bulk-orchestration-service deploy/helm/payment-bulk-orchestration-service -n payments -f values-<env>.yaml`; Flyway runs as the pre-install Job | Bulk squad | Pods ready; `flyway_schema_history` at the latest version; readiness green | Pods not ready, migration failure |
+| 4 | Deploy with `helm upgrade --install payment-bulk-orchestration-service deploy/helm/payment-bulk-orchestration-service -n payments -f values-<env>.yaml`; Flyway runs as the schema owner in the pre-install hook Job before the pods start | Bulk squad | Job succeeded; `flyway_schema_history` at V11; pods ready as `payment_bulk_app` | Pods not ready, migration Job failed (it stays for inspection; fix and re-run the upgrade) |
 | 5 | Relay stays off (`OUTBOX_RELAY_ENABLED=false`) until the platform has created `evt.pay.bulk.accepted.v1` and `evt.pay.bulk.rejected.v1` (the service never creates topics); then enable it | Bulk squad, platform | `outbox_pending_events` drains; `outbox_send_failures_total` flat | `outbox_parked_events` > 0 |
 | 6 | Smoke upload through the gateway with a test TPP (DPoP token, `INITIATEBULKPAYMENTS` consent, `Currency`) | Bulk squad | 202, then `Validated`, report figures equal the file; Accepted event on Kafka | Any 5xx, 401 on a valid proof, 503 from the consent check |
 | 7 | Freeze uploads on the monolith and drain it: wait until every monolith file is terminal or past its poll window | Bulk squad | No monolith file in a non-terminal state still being polled | Drain does not finish in the window |
@@ -165,6 +190,7 @@ Rejected event with reason `CONSENT_NOT_USABLE`); a consent-service outage only 
 
 - [ ] Domain and application tests pass
 - [ ] Integration tests pass against PostgreSQL (`TEST_DB_URL`); CI fails without a database
+- [ ] Flyway runs as the schema owner in the hook Job; pods run as the DML-only runtime role (`DatabaseMigrationIT`, runtime-role IT)
 - [ ] Contract compatibility pass (OpenAPI, AsyncAPI, consent provider contract)
 - [ ] Security scan pass; DPoP enforced; Bearer tokens get 401
 - [ ] SLO/SLA thresholds pass for one business day after step 8

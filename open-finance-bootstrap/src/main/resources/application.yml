@@ -36,9 +36,18 @@ spring:
         order_inserts: true
         order_updates: true
   flyway:
+    # Platform contract "Database roles": migrations run as the schema owner in
+    # the Helm pre-install/pre-upgrade Job "migrate" (SPRING_FLYWAY_USER and
+    # SPRING_FLYWAY_PASSWORD from <env>/payment-bulk-orchestration-service/db-migration);
+    # the pods get only the runtime role (DB_USERNAME, secret db-app) and run with
+    # SPRING_FLYWAY_ENABLED=false. V11 grants the runtime role its DML. Without
+    # owner credentials (local runs) Flyway uses the app credentials.
+    placeholders:
+      runtime_role: ${spring.datasource.username}
     schemas: sc_pay_bulk_orchestration
     default-schema: sc_pay_bulk_orchestration
-    create-schemas: true
+    # The DBA bootstrap creates the schema, owned by the schema owner (runbook section 2).
+    create-schemas: false
     locations: classpath:db/migration
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}

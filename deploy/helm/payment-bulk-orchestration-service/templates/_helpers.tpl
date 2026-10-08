@@ -47,3 +47,7 @@ app.kubernetes.io/name = the service account name.
 {{- end -}}
 {{ include "bulk.labels" . }}
 {{- end -}}
+
+{{- define "bulk.migrationName" -}}
+{{ include "bulk.name" . }}-db-migration
+{{- end -}}

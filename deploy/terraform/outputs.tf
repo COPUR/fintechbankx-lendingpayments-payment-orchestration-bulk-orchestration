@@ -18,6 +18,11 @@ output "app_db_secret_name" {
   value       = aws_secretsmanager_secret.app_database.name
 }
 
+output "migration_db_secret_name" {
+  description = "Helm value migration.remoteSecretName (schema owner, Flyway Job only)."
+  value       = aws_secretsmanager_secret.migration_database.name
+}
+
 output "oidc_client_secret_name" {
   description = "Helm value externalSecret.serviceClientSecretName."
   value       = aws_secretsmanager_secret.oidc_client.name

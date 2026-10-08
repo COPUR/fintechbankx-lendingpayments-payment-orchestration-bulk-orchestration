@@ -63,6 +63,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -155,12 +156,14 @@ class BulkOrchestrationServiceIT {
 
     @BeforeEach
     void cleanTables() {
-        jdbc.update("delete from " + SCHEMA + ".dpop_proof_jti");
-        jdbc.update("delete from " + SCHEMA + ".outbox_event");
-        jdbc.update("delete from " + SCHEMA + ".bulk_idempotency");
-        jdbc.update("delete from " + SCHEMA + ".bulk_consent_binding");
-        jdbc.update("delete from " + SCHEMA + ".bulk_item");
-        jdbc.update("delete from " + SCHEMA + ".bulk_file");
+        // As the schema owner: the runtime role may not delete files, items, bindings or idempotency records.
+        JdbcTemplate owner = PostgresTestDatabase.owner();
+        owner.update("delete from " + SCHEMA + ".dpop_proof_jti");
+        owner.update("delete from " + SCHEMA + ".outbox_event");
+        owner.update("delete from " + SCHEMA + ".bulk_idempotency");
+        owner.update("delete from " + SCHEMA + ".bulk_consent_binding");
+        owner.update("delete from " + SCHEMA + ".bulk_item");
+        owner.update("delete from " + SCHEMA + ".bulk_file");
     }
 
     @Test
@@ -173,6 +176,51 @@ class BulkOrchestrationServiceIT {
 
         assertThat(tables).containsExactly("bulk_consent_binding", "bulk_file", "bulk_idempotency", "bulk_item",
                 "dpop_proof_jti", "outbox_event");
+    }
+
+    /**
+     * The service connects as a runtime role with DML only: it cannot run DDL
+     * (it owns neither the schema nor the tables), cannot delete or rewrite
+     * what the code only appends, and cannot read Flyway's history. Tables a
+     * later migration creates get DML by default (default privileges).
+     */
+    @Test
+    void theRuntimeRoleCannotRunDdlOrDeleteFilesItemsOrBindings() {
+        assertThat(jdbc.queryForObject("select current_user", String.class)).isEqualTo(PostgresTestDatabase.RUNTIME_ROLE);
+        JdbcTemplate runtime = PostgresTestDatabase.runtime();
+
+        assertThatThrownBy(() -> runtime.execute("create table " + SCHEMA + ".shadow (id int)"))
+                .rootCause().hasMessageContaining("permission denied for schema " + SCHEMA);
+        assertThatThrownBy(() -> runtime.execute("alter table " + SCHEMA + ".bulk_file add column shadow int"))
+                .rootCause().hasMessageContaining("must be owner of").hasMessageContaining("bulk_file");
+        assertThatThrownBy(() -> runtime.execute("drop table " + SCHEMA + ".outbox_event"))
+                .rootCause().hasMessageContaining("must be owner of").hasMessageContaining("outbox_event");
+        assertThatThrownBy(() -> runtime.execute("create index ix_shadow on " + SCHEMA + ".bulk_item (amount)"))
+                .rootCause().hasMessageContaining("must be owner of").hasMessageContaining("bulk_item");
+        assertThatThrownBy(() -> runtime.execute("truncate " + SCHEMA + ".bulk_file"))
+                .rootCause().hasMessageContaining("permission denied for table bulk_file");
+        for (String appendOnly : List.of("bulk_file", "bulk_item", "bulk_consent_binding", "bulk_idempotency")) {
+            assertThatThrownBy(() -> runtime.update("delete from " + SCHEMA + "." + appendOnly))
+                    .rootCause().hasMessageContaining("permission denied for table " + appendOnly);
+        }
+        assertThatThrownBy(() -> runtime.update("update " + SCHEMA + ".bulk_consent_binding set item_count = 0"))
+                .rootCause().hasMessageContaining("permission denied for table bulk_consent_binding");
+        assertThatThrownBy(() -> runtime.update("update " + SCHEMA + ".bulk_idempotency set file_status = 'REJECTED'"))
+                .rootCause().hasMessageContaining("permission denied for table bulk_idempotency");
+        assertThatThrownBy(() -> runtime.queryForObject("select count(*) from " + SCHEMA + ".flyway_schema_history", Integer.class))
+                .rootCause().hasMessageContaining("permission denied for table flyway_schema_history");
+        assertThat(runtime.queryForObject("select count(*) from " + SCHEMA + ".bulk_file", Integer.class)).isZero();
+
+        JdbcTemplate owner = PostgresTestDatabase.owner();
+        try {
+            owner.execute("create table " + SCHEMA + ".later_table (id int)");
+            assertThat(runtime.update("insert into " + SCHEMA + ".later_table values (1)")).isEqualTo(1);
+            assertThat(runtime.update("delete from " + SCHEMA + ".later_table")).isEqualTo(1);
+            assertThatThrownBy(() -> runtime.execute("truncate " + SCHEMA + ".later_table"))
+                    .rootCause().hasMessageContaining("permission denied for table later_table");
+        } finally {
+            owner.execute("drop table if exists " + SCHEMA + ".later_table");
+        }
     }
 
     @Test
@@ -365,7 +413,7 @@ class BulkOrchestrationServiceIT {
                         .header("x-idempotency-key", "IDEMP-REUSE").contentType("application/json").content(body))
                 .andExpect(status().isAccepted())
                 .andReturn().getResponse().getContentAsString()).at("/Data/FilePaymentId").asText();
-        jdbc.update("update " + SCHEMA + ".bulk_idempotency set created_at = now() - interval '3 days',"
+        PostgresTestDatabase.owner().update("update " + SCHEMA + ".bulk_idempotency set created_at = now() - interval '3 days',"
                 + " expires_at = now() - interval '2 days' where idempotency_key = 'IDEMP-REUSE'");
 
         // Same request after expiry: still the original file, never a second one (and never a 500).
