@@ -246,32 +246,30 @@ resource "aws_iam_role_policy" "workload" {
 
 locals {
   msk_topic_arn_prefix = var.msk_cluster_arn == "" ? "" : replace(var.msk_cluster_arn, ":cluster/", ":topic/")
-  msk_group_arn_prefix = var.msk_cluster_arn == "" ? "" : replace(var.msk_cluster_arn, ":cluster/", ":group/")
 }
 
+# Producer only, on evt.pay.bulk.* (api/asyncapi/svc-pay-bulk-orchestration.yaml):
+# no consumer group (no :group/ grants) and no Kafka transactions (no
+# transactional.id, so no :transactional-id/ grants). The idempotent producer
+# (enable.idempotence=true) needs WriteDataIdempotently, which MSK authorises on
+# the cluster ARN, not on topics.
 data "aws_iam_policy_document" "msk" {
   count = var.msk_cluster_arn == "" ? 0 : 1
 
   statement {
-    sid       = "ConnectToCluster"
-    actions   = ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster"]
+    sid = "ConnectAndProduceIdempotently"
+    actions = [
+      "kafka-cluster:Connect",
+      "kafka-cluster:DescribeCluster",
+      "kafka-cluster:WriteDataIdempotently",
+    ]
     resources = [var.msk_cluster_arn]
   }
 
   statement {
-    sid = "ProduceOwnTopics"
-    actions = [
-      "kafka-cluster:DescribeTopic",
-      "kafka-cluster:WriteData",
-      "kafka-cluster:WriteDataIdempotently",
-    ]
+    sid       = "ProduceOwnTopics"
+    actions   = ["kafka-cluster:DescribeTopic", "kafka-cluster:WriteData"]
     resources = ["${local.msk_topic_arn_prefix}/evt.pay.bulk.*"]
-  }
-
-  statement {
-    sid       = "IdempotentProducerTransactionalIds"
-    actions   = ["kafka-cluster:DescribeTransactionalId", "kafka-cluster:AlterTransactionalId"]
-    resources = ["${local.msk_group_arn_prefix}/${local.service_id}*"]
   }
 }
 
