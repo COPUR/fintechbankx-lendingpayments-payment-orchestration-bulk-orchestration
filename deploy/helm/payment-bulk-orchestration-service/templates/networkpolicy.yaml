@@ -17,24 +17,24 @@ spec:
     - Ingress
   ingress:
     - ports:
-        - port: {{ .Values.service.port }}
+        - port: {{ .Values.service.port | int }}
           protocol: TCP
       from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace | quote }}
         {{- range .Values.networkPolicy.allowedNamespaces }}
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ . }}
+              kubernetes.io/metadata.name: {{ . | quote }}
         {{- end }}
     - ports:
         - port: 15020
           protocol: TCP
-        - port: {{ .Values.service.managementPort }}
+        - port: {{ .Values.service.managementPort | int }}
           protocol: TCP
       from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace }}
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.monitoringNamespace | quote }}
 {{- end }}

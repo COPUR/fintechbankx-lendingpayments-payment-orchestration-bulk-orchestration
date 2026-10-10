@@ -34,13 +34,13 @@ jobs:
       - uses: azure/setup-helm@v4
         with:
           version: v3.16.3
-      # Guardrail 4a: templates/_fbx-guard.tpl is a verbatim copy of the platform chart's guard block
-      # (cicd-templates charts/fintechbankx-service/templates/_helpers.tpl at 2caa48f, README "Run, test and
-      # deploy"); an edited copy fails here. Re-copy from the platform and update the commit and the sum together.
+      # Guardrail 4a: templates/_fbx_helpers.tpl is a byte-identical copy of the platform chart's helpers
+      # (cicd-templates charts/fintechbankx-service/templates/_helpers.tpl at a4f0072, README "Chart values guard");
+      # an edited copy fails here. Re-copy from the platform and update the commit and the sum together.
       - name: Vendored guard matches the platform copy
         run: |
           sha256sum -c --strict - <<'SUMS'
-          0dae4352a5872385177228fb29416bccf486a6231f63764576add00adf7bb7e2  deploy/helm/payment-bulk-orchestration-service/templates/_fbx-guard.tpl
+          1fd684735383301baf3052c5d8978dd86edee1ac1c66ebfb944a8a6a166f4c92  deploy/helm/payment-bulk-orchestration-service/templates/_fbx_helpers.tpl
           SUMS
       - name: Lint and render chart
         run: |
@@ -63,7 +63,7 @@ jobs:
           # Shared-chart convention (cicd-templates 4f0f266): mounted at /etc/fintechbankx/rds-ca, path in DB_SSL_ROOT_CERT,
           # in the pods and in the migration Job.
           rendered="$(helm template ci "$chart" --namespace payments $args)"
-          [ "$(grep -c "mountPath: /etc/fintechbankx/rds-ca" <<<"$rendered")" -eq 2 ]
+          [ "$(grep -c 'mountPath: "/etc/fintechbankx/rds-ca"' <<<"$rendered")" -eq 2 ]
           [ "$(grep -A1 "name: DB_SSL_ROOT_CERT" <<<"$rendered" | grep -c 'value: "/etc/fintechbankx/rds-ca/global-bundle.pem"')" -eq 2 ]
           if grep -q "/etc/ssl/rds" <<<"$rendered"; then
             echo "chart still mounts the RDS CA bundle at the old path /etc/ssl/rds" >&2; exit 1
@@ -139,7 +139,20 @@ jobs:
                      "JDK_JAVA_OPTIONS=-Dspring.datasource.hikari.jdbc-url=jdbc:postgresql://other:5432/db" \
                      "_JAVA_OPTIONS=-Dspring.profiles.include=local" \
                      "JAVA_TOOL_OPTIONS=@/tmp/jvm.options" \
-                     "JAVA_TOOL_OPTIONS=-XX:VMOptionsFile=/tmp/jvm.options"; do
+                     "JAVA_TOOL_OPTIONS=-XX:VMOptionsFile=/tmp/jvm.options" \
+                     "SPRING_SSL_BUNDLE_PEM_DB_TRUSTSTORE_CERTIFICATE=file:/tmp/ca.pem" \
+                     "SPRING_KAFKA_SSL_BUNDLE=other" \
+                     "SPRING_DATA_MONGODB_SSL_BUNDLE=other" \
+                     "DB_SSL_ROOT_CERT=/tmp/other.pem" \
+                     "PGSSLROOTCERT=/tmp/other.pem" \
+                     "JAVA_TOOL_OPTIONS=-Djdk.tls.trustNameService=false" \
+                     "JAVA_TOOL_OPTIONS=-Djava.security.properties=/tmp/java.security" \
+                     "JAVA_TOOL_OPTIONS=-Djdk.internal.httpclient.disableHostnameVerification=true" \
+                     "JAVA_TOOL_OPTIONS=\$(JVM_EXTRA)" \
+                     "JAVA_TOOL_OPTIONS=\${JVM_EXTRA}" \
+                     "SPRING_KAFKA_SSL_TRUST_STORE_CERTIFICATES=file:/tmp/ca.pem" \
+                     "DB_URL=jdbc:postgresql://ci-db:5432/db?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem\${EXTRA}" \
+                     "DB_URL=jdbc:postgresql://ci-db:5432/db?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem\$(EXTRA)"; do
             if helm template ci "$chart" --namespace payments $args --set-string "config.$bad" > /dev/null 2>&1; then
               echo "chart rendered config.$bad (Spring config redirection, profile, datasource, Kafka protocol or TLS switch must fail the render)" >&2; exit 1
             fi
@@ -162,17 +175,27 @@ jobs:
                -f <(printf 'config:\n  spring.application.json: \x27{"fintechbankx":{"tls":{"enforce":false}}}\x27\n') > /dev/null 2>&1; then
             echo "chart rendered config.spring.application.json (must fail the render)" >&2; exit 1
           fi
+          # Template interpolation: every key and value is quoted, so a value cannot close its line and add a key,
+          # and a key that is not a ConfigMap key ([-._a-zA-Z0-9]+) fails the render (fbx.validateKeyNames).
+          if helm template ci "$chart" --namespace payments $args -f <(printf 'config:\n  "SAFE\\nSPRING_CONFIG_IMPORT": "file:/tmp/x.yml"\n') > /dev/null 2>&1; then
+            echo "chart rendered a config key containing a newline" >&2; exit 1
+          fi
+          injected="$(helm template ci "$chart" --namespace payments $args -f <(printf 'config:\n  OIDC_AUDIENCE: "x\\nSPRING_CONFIG_IMPORT: file:/tmp/x.yml\\nSPRING_DATASOURCE_URL: jdbc:x"\n'))"
+          if grep -qE '^ *(SPRING_CONFIG_IMPORT|SPRING_DATASOURCE_URL):' <<<"$injected"; then
+            echo "a config value containing a newline injected an extra ConfigMap key" >&2; exit 1
+          fi
+          [ "$(python3 -c "import sys,yaml; print(sum(1 for d in yaml.safe_load_all(sys.stdin) if d and d.get('kind')=='ConfigMap' for k in d['data'] if k in ('SPRING_CONFIG_IMPORT','SPRING_DATASOURCE_URL')))" <<<"$injected")" -eq 0 ]
           # Still allowed: the datasource credentials and a JVM option that mentions none of the guarded settings.
           helm template ci "$chart" --namespace payments $args --set-string config.SPRING_DATASOURCE_USERNAME=payment_bulk_app > /dev/null
           helm template ci "$chart" --namespace payments $args --set-string "config.JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError" > /dev/null
           # The profile and the Kafka protocol come from the boolean kafkaStrimzi.enabled only: kafka-msk/SASL_SSL by
           # default, kafka-strimzi/SSL when set; neither is in the ConfigMap.
           deployment="$(helm template ci "$chart" --namespace payments $args --show-only templates/deployment.yaml)"
-          grep -A1 'name: SPRING_PROFILES_ACTIVE' <<<"$deployment" | grep -q 'value: kafka-msk'
-          grep -A1 'name: KAFKA_SECURITY_PROTOCOL' <<<"$deployment" | grep -q 'value: SASL_SSL'
+          grep -A1 'name: SPRING_PROFILES_ACTIVE' <<<"$deployment" | grep -q 'value: "kafka-msk"'
+          grep -A1 'name: KAFKA_SECURITY_PROTOCOL' <<<"$deployment" | grep -q 'value: "SASL_SSL"'
           strimzi="$(helm template ci "$chart" --namespace payments --set kafkaStrimzi.enabled=true $args --show-only templates/deployment.yaml)"
-          grep -A1 'name: SPRING_PROFILES_ACTIVE' <<<"$strimzi" | grep -q 'value: kafka-strimzi'
-          grep -A1 'name: KAFKA_SECURITY_PROTOCOL' <<<"$strimzi" | grep -q 'value: SSL'
+          grep -A1 'name: SPRING_PROFILES_ACTIVE' <<<"$strimzi" | grep -q 'value: "kafka-strimzi"'
+          grep -A1 'name: KAFKA_SECURITY_PROTOCOL' <<<"$strimzi" | grep -q 'value: "SSL"'
           if helm template ci "$chart" --namespace payments $args --show-only templates/configmap.yaml | grep -qE 'SPRING_PROFILES|KAFKA_SECURITY_PROTOCOL'; then
             echo "the ConfigMap carries the profile or the Kafka protocol; they must come from kafkaStrimzi.enabled" >&2; exit 1
           fi
@@ -180,7 +203,7 @@ jobs:
           job="$(helm template ci "$chart" --namespace payments $args --show-only templates/migration-job.yaml)"
           grep -q 'helm.sh/hook: pre-install,pre-upgrade' <<<"$job"
           grep -q 'args: \["migrate"\]' <<<"$job"
-          grep -q 'key: dev/payment-bulk-orchestration-service/db-migration' <<<"$job"
+          grep -q 'key: "dev/payment-bulk-orchestration-service/db-migration"' <<<"$job"
           deployment="$(helm template ci "$chart" --namespace payments $args --show-only templates/deployment.yaml)"
           grep -A1 'name: SPRING_FLYWAY_ENABLED' <<<"$deployment" | grep -q 'value: "false"'
           if grep -q 'db-migration' <<<"$deployment"; then echo "the service pods reference the migration secret" >&2; exit 1; fi
@@ -191,7 +214,7 @@ jobs:
           # app.kubernetes.io/name=<service account> and reads only <env>/<service account>/.
           sa=payment-bulk-orchestration-service
           rendered="$(helm template ci "$chart" --namespace payments $args)"
-          keys="$(grep -E '^ +key: ' <<<"$rendered" | awk '{print $2}')"
+          keys="$(grep -E '^ +key: ' <<<"$rendered" | awk '{print $2}' | tr -d '"')"
           test -n "$keys"
           if grep -vE "^(dev|staging|prod)/$sa/[a-z0-9-]+$" <<<"$keys"; then
             echo "ExternalSecret remoteRef key outside <env>/$sa/" >&2; exit 1
@@ -215,7 +238,7 @@ jobs:
           grep -q 'prometheus.io/port: "8081"' <<<"$deployment"
           grep -q "proxy.istio.io/config: '{\"terminationDrainDuration\": \"55s\"}'" <<<"$deployment"
           test "$(grep -oE 'terminationGracePeriodSeconds: [0-9]+' <<<"$deployment" | awk '{print $2}')" -gt 55
-          test "$(grep -c 'fintechbankx.io/squad: payments' <<<"$rendered")" -ge 5
+          test "$(grep -c 'fintechbankx.io/squad: "payments"' <<<"$rendered")" -ge 5
           # Micrometer common tags app = service account and squad = namespace, from the ConfigMap.
           grep -q 'METRICS_TAG_SQUAD: "payments"' <<<"$rendered"
           grep -q "METRICS_TAG_APP: \"$sa\"" <<<"$rendered"

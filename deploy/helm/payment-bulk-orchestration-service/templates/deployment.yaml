@@ -1,3 +1,5 @@
+{{- /* Guardrail 4a: the vendored platform guard (fbx.guard) on every values-fed route, before anything renders. */ -}}
+{{- include "bulk.guard" . -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -6,7 +8,7 @@ metadata:
     {{- include "bulk.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.autoscaling.enabled }}
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ .Values.replicaCount | int }}
   {{- end }}
   revisionHistoryLimit: 5
   strategy:
@@ -21,9 +23,9 @@ spec:
     metadata:
       labels:
         {{- include "bulk.selectorLabels" . | nindent 8 }}
-        app: {{ .Values.serviceAccount.name }}
+        app: {{ .Values.serviceAccount.name | quote }}
         version: {{ required "image.tag is required" .Values.image.tag | quote }}
-        fintechbankx.io/squad: {{ .Values.squad }}
+        fintechbankx.io/squad: {{ .Values.squad | quote }}
         {{- toYaml .Values.podLabels | nindent 8 }}
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
@@ -39,7 +41,7 @@ spec:
         traffic.sidecar.istio.io/excludeOutboundPorts: "9093"
         {{- end }}
     spec:
-      serviceAccountName: {{ .Values.serviceAccount.name }}
+      serviceAccountName: {{ .Values.serviceAccount.name | quote }}
       # Above the sidecar drain (55 s) so neither is killed mid-drain.
       terminationGracePeriodSeconds: 65
       securityContext:
@@ -50,13 +52,13 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       topologySpreadConstraints:
-        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+        - maxSkew: {{ .Values.topologySpread.maxSkew | int }}
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               {{- include "bulk.selectorLabels" . | nindent 14 }}
-        - maxSkew: {{ .Values.topologySpread.maxSkew }}
+        - maxSkew: {{ .Values.topologySpread.maxSkew | int }}
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: ScheduleAnyway
           labelSelector:
@@ -65,12 +67,12 @@ spec:
       containers:
         - name: payment-bulk-orchestration-service
           image: "{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
           ports:
             - name: http
-              containerPort: {{ .Values.service.port }}
+              containerPort: {{ .Values.service.port | int }}
             - name: http-management
-              containerPort: {{ .Values.service.managementPort }}
+              containerPort: {{ .Values.service.managementPort | int }}
           env:
             # Migrations run only in the pre-install/pre-upgrade Job as the
             # schema owner; the pods hold the runtime role and never migrate.
@@ -79,28 +81,28 @@ spec:
             # Path of the mounted RDS CA bundle (shared-chart convention, cicd-templates 4f0f266).
             - name: DB_SSL_ROOT_CERT
               value: {{ printf "%s/%s" (trimSuffix "/" .Values.rdsCaBundle.mountPath) .Values.rdsCaBundle.key | quote }}
-            # The Kafka profile and protocol come from the boolean kafkaStrimzi.enabled only (guardrail 4a):
-            # kafka-msk (IAM over SASL_SSL) or kafka-strimzi (mutual TLS, SSL). No value names a profile
-            # (bulk.guardEnv refuses spring.profiles.* and KAFKA_SECURITY_PROTOCOL in config).
+            # The Kafka profile and protocol come from the boolean kafkaStrimzi.enabled only (guardrail 4a), through
+            # the vendored fbx.kafkaProfile: kafka-msk (IAM over SASL_SSL) or kafka-strimzi (mutual TLS, SSL). No
+            # value names a profile (fbx.guard refuses every spring.profiles.* name).
             - name: SPRING_PROFILES_ACTIVE
-              value: {{ ternary "kafka-strimzi" "kafka-msk" .Values.kafkaStrimzi.enabled }}
+              value: {{ include "bulk.kafkaProfile" . | quote }}
             - name: KAFKA_SECURITY_PROTOCOL
-              value: {{ ternary "SSL" "SASL_SSL" .Values.kafkaStrimzi.enabled }}
+              value: {{ ternary "SSL" "SASL_SSL" .Values.kafkaStrimzi.enabled | quote }}
           {{- if .Values.kafkaStrimzi.enabled }}
             - name: KAFKA_TLS_CERT
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.kafkaStrimzi.tlsSecretName }}
+                  name: {{ .Values.kafkaStrimzi.tlsSecretName | quote }}
                   key: user.crt
             - name: KAFKA_TLS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.kafkaStrimzi.tlsSecretName }}
+                  name: {{ .Values.kafkaStrimzi.tlsSecretName | quote }}
                   key: user.key
             - name: KAFKA_TLS_CA
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.kafkaStrimzi.tlsSecretName }}
+                  name: {{ .Values.kafkaStrimzi.tlsSecretName | quote }}
                   key: ca.crt
           {{- end }}
           envFrom:
@@ -143,14 +145,14 @@ spec:
             - name: tmp
               mountPath: /tmp
             - name: rds-ca-bundle
-              mountPath: {{ .Values.rdsCaBundle.mountPath }}
+              mountPath: {{ .Values.rdsCaBundle.mountPath | quote }}
               readOnly: true
       volumes:
         - name: tmp
           emptyDir: {}
         - name: rds-ca-bundle
           configMap:
-            name: {{ .Values.rdsCaBundle.configMapName }}
+            name: {{ .Values.rdsCaBundle.configMapName | quote }}
             items:
-              - key: {{ .Values.rdsCaBundle.key }}
-                path: {{ .Values.rdsCaBundle.key }}
+              - key: {{ .Values.rdsCaBundle.key | quote }}
+                path: {{ .Values.rdsCaBundle.key | quote }}

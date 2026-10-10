@@ -4,13 +4,6 @@
 {{- fail (printf "config.%s is required" $key) }}
 {{- end }}
 {{- end }}
-{{- /* Aurora: DB_URL is a PostgreSQL JDBC URL; the vendored platform guard parses it (not a substring search) and every other
-     config value that is one, and no value may redirect Spring's configuration, name a profile, override the datasource,
-     the Kafka protocol or the startup TLS assertion (templates/_fbx-guard.tpl, templates/_helpers.tpl bulk.guardValues). */ -}}
-{{- if not (regexMatch "(?i)^jdbc:(?:[a-z0-9-]+:)*postgresql:" (trim (toString .Values.config.DB_URL))) }}
-{{- fail "config.DB_URL must be a PostgreSQL JDBC URL (jdbc:postgresql://...)" }}
-{{- end }}
-{{- include "bulk.guardValues" $ -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -18,8 +11,9 @@ metadata:
   labels:
     {{- include "bulk.labels" . | nindent 4 }}
 data:
+  {{- /* Every key and value quoted: a value cannot close its line and add a key (the guard, fbx.guard, runs from the Deployment and the Job). */}}
   {{- range $key, $value := .Values.config }}
-  {{ $key }}: {{ $value | quote }}
+  {{ $key | quote }}: {{ $value | quote }}
   {{- end }}
   # Micrometer common tags (platform convention): app = service account, squad = namespace.
   METRICS_TAG_APP: {{ .Values.serviceAccount.name | quote }}
