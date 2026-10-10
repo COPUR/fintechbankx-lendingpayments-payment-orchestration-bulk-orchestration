@@ -68,6 +68,9 @@ spec:
         sidecar.istio.io/inject: {{ .Values.migration.istioSidecar | quote }}
     spec:
       restartPolicy: Never
+      # Runs as the service account its app.kubernetes.io/name label names (not the
+      # namespace default), so label and principal agree; Flyway needs no API token.
+      serviceAccountName: {{ include "bulk.serviceAccountName" . }}
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true

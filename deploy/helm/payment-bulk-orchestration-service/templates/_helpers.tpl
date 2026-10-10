@@ -70,6 +70,18 @@ ExternalSecret adds its own (service or db-migration).
 {{ include "bulk.commonLabels" . }}
 {{- end -}}
 
+{{- /*
+The service account a pod runs as. Pods are labelled app.kubernetes.io/name =
+the chart name, which the mesh policy reads as the service account: the two
+must be equal, so the label never claims a principal the pod does not run as.
+*/ -}}
+{{- define "bulk.serviceAccountName" -}}
+{{- if ne (include "bulk.name" .) .Values.serviceAccount.name -}}
+{{- fail (printf "chart name %q must equal serviceAccount.name %q (pod label app.kubernetes.io/name)" (include "bulk.name" .) .Values.serviceAccount.name) -}}
+{{- end -}}
+{{- .Values.serviceAccount.name -}}
+{{- end -}}
+
 {{- define "bulk.migrationName" -}}
 {{ include "bulk.name" . }}-db-migration
 {{- end -}}

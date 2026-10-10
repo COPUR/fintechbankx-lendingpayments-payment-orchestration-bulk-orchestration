@@ -108,7 +108,8 @@ jobs:
           test "$(grep -c 'fintechbankx.io/squad: payments' <<<"$rendered")" -ge 5
           # Pod labels and selection (cicd-templates 335a345): API and Job pods both carry
           # app.kubernetes.io/name=<SA> (mesh Aurora egress); every selector requires component=service, so none
-          # selects the db-migration Job pod; only the API pods carry fintechbankx.io/service-id.
+          # selects the db-migration Job pod; only the API pods carry fintechbankx.io/service-id. Both pods run as
+          # serviceAccountName=<SA>, so the label never names a principal the pod does not run as.
           python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
           python3 scripts/ci/helm-selector-check.py "$sa" svc-pay-bulk-orchestration <<<"$rendered"
           helm template ci "$chart" --namespace payments -f "$chart/values-dev.yaml" $args \

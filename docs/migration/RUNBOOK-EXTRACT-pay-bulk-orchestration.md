@@ -98,7 +98,15 @@ Cross-repo prerequisites, in this order (each must be done before the next start
    ```
 
    Then put `{"username","password"}` of each role into its secret (`aws secretsmanager put-secret-value`). The
-   first install's pre-install Job runs every migration (V1 to V13) as the owner; V11 grants the runtime role. Rollback: uninstall
+   first install's pre-install Job runs every migration (V1 to V13) as the owner; V11 grants the runtime role.
+   The Job runs as the service account `payment-bulk-orchestration-service`, but Helm creates the chart's own
+   resources only after the pre-install hooks, so before the **first** install create that account with Helm's
+   ownership metadata and the install adopts it (later upgrades need nothing):
+   `kubectl -n payments create serviceaccount payment-bulk-orchestration-service`, then
+   `kubectl -n payments label serviceaccount payment-bulk-orchestration-service app.kubernetes.io/managed-by=Helm`
+   and `kubectl -n payments annotate serviceaccount payment-bulk-orchestration-service
+   meta.helm.sh/release-name=payment-bulk-orchestration-service meta.helm.sh/release-namespace=payments`.
+   Rollback: uninstall
    the chart, then `DROP SCHEMA sc_pay_bulk_orchestration CASCADE` and recreate it as above.
 5. **Smoke upload** in the target environment (section 3, step 6).
 6. **Route switch** (section 3, step 8).

@@ -7,6 +7,9 @@ app.kubernetes.io/name = the service account name. The component label then
 keeps it out of everything that selects the API pods (component=service, cicd-templates 335a345): the Service, the PDB,
 the chart's NetworkPolicy, the Deployment selector and its spread constraints.
 
+Both pods also run as that service account (serviceAccountName), so the label
+and the principal agree.
+
 Observability (PodMonitor fintechbankx-services, ServiceAllInstancesDown) keys on
 the pod label fintechbankx.io/service-id: the API pods carry it, the Job pod must
 not (it would be scraped and, once completed, count as a not-ready instance).
@@ -54,6 +57,13 @@ def main():
         fail(f"Job pod {COMPONENT} must be db-migration, got {job_pod.get(COMPONENT)!r}")
     if api_pod.get(NAME) != service_account or api_pod.get(COMPONENT) != "service":
         fail(f"Deployment pods need {NAME}={service_account} and {COMPONENT}=service")
+
+    # The label is the workload identity the mesh policy trusts, so each pod must also run as that principal:
+    # a Job pod labelled <SA> but running as the namespace "default" account would claim an identity it lacks.
+    for kind, workload in (("Deployment", deployment), ("Job", job)):
+        principal = workload["spec"]["template"]["spec"].get("serviceAccountName")
+        if principal != service_account:
+            fail(f"{kind} pod runs as service account {principal!r} but is labelled {NAME}={service_account}")
 
     if api_pod.get(SERVICE_ID) != service_id:
         fail(f"Deployment pods need {SERVICE_ID}={service_id}, got {api_pod.get(SERVICE_ID)!r}")
