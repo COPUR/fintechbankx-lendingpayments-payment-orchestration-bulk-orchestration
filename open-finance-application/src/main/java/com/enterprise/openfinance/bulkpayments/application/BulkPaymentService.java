@@ -132,7 +132,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
         eventPublisher.publish(file, file.pullDomainEvents());
 
         return new BulkUploadResult(file.fileId(), file.status(), command.interactionId(), false,
-                file.acceptedCount(), file.rejectedCount(), file.createdAt());
+                file.releasedAcceptedCount(), file.releasedRejectedCount(), file.createdAt());
     }
 
     /** Another TPP's file is empty, like an unknown one (ADR-025 item 5): the same 404, no 403. */
@@ -182,7 +182,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
                         throw new ForbiddenException(ForbiddenException.CONSENT_NOT_USABLE);
                     }
                     return new BulkUploadResult(file.fileId(), file.status(), command.interactionId(), true,
-                            file.acceptedCount(), file.rejectedCount(), file.createdAt());
+                            file.releasedAcceptedCount(), file.releasedRejectedCount(), file.createdAt());
                 });
     }
 

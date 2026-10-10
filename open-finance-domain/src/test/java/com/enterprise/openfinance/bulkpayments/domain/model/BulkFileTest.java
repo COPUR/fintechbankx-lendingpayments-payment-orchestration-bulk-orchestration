@@ -168,6 +168,47 @@ class BulkFileTest {
                 .isInstanceOf(BusinessRuleViolationException.class);
     }
 
+    /**
+     * What the file stands by is one rule for the status, the report and the Rejected event: a file of 700
+     * items, 650 accepted and 50 rejected at validation, keeps 650 / 50 while processing and once Validated,
+     * but once Stopped it releases nothing: 0 accepted, 700 rejected, the figures of its Rejected event.
+     * The validation figures stay as stored.
+     */
+    @Test
+    void aStoppedFileStandsByNoAcceptedItemWhileItsValidationFiguresStayAsStored() {
+        BulkFile file = accept(parsed(700, 650, 50, "7000", "6500", BulkFileStatus.VALIDATED));
+        file.pullDomainEvents();
+        assertThat(file.releasedAcceptedCount()).isEqualTo(650);
+        assertThat(file.releasedRejectedCount()).isEqualTo(50);
+
+        file.recordProcessedBatch(500, BATCH_1);
+        BulkFile stored = rehydrateAsStored(file, 1L);
+        assertThat(stored.releasedAcceptedCount()).isEqualTo(650);
+        assertThat(stored.releasedRejectedCount()).isEqualTo(50);
+
+        stored.stopBecauseConsentIsNotUsable(BATCH_2);
+
+        assertThat(stored.releasedAcceptedCount()).isZero();
+        assertThat(stored.releasedRejectedCount()).isEqualTo(700);
+        assertThat(stored.pullDomainEvents()).singleElement().isInstanceOfSatisfying(BulkFileRejected.class,
+                event -> assertThat(event.rejectedCount()).isEqualTo(stored.releasedRejectedCount()));
+        assertThat(stored.acceptedCount()).as("validation figure, as stored").isEqualTo(650);
+        assertThat(stored.rejectedCount()).as("validation figure, as stored").isEqualTo(50);
+        BulkFile reloaded = rehydrateAsStored(stored, 2L);
+        assertThat(reloaded.releasedAcceptedCount()).isZero();
+        assertThat(reloaded.releasedRejectedCount()).isEqualTo(700);
+    }
+
+    @Test
+    void aValidatedFileStandsByItsValidationFigures() {
+        BulkFile file = accept(parsed(3, 2, 1, "30", "20", BulkFileStatus.VALIDATED));
+        file.recordProcessedBatch(3, BATCH_1);
+
+        assertThat(file.status()).isEqualTo(BulkFileStatus.VALIDATED);
+        assertThat(file.releasedAcceptedCount()).isEqualTo(2);
+        assertThat(file.releasedRejectedCount()).isEqualTo(1);
+    }
+
     @Test
     void anAllRejectedFileSaysWhyItWasRejected() {
         BulkFile file = accept(parsed(1, 0, 1, "10.00", "0", BulkFileStatus.REJECTED));

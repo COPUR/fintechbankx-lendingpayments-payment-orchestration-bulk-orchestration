@@ -661,9 +661,13 @@ class BulkOrchestrationServiceIT {
                 java.time.Instant.parse("2099-01-01T00:00:00Z"), false)));
         assertThat(processor.processNextBatch()).isZero();
 
+        // The status agrees with the report and the Rejected event: nothing of a Stopped file is released.
         mvc.perform(asTpp(get("/open-finance/v1/file-payments/{id}", fileId)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.Data.Status").value("Stopped"));
+                .andExpect(jsonPath("$.Data.Status").value("Stopped"))
+                .andExpect(jsonPath("$.Data.TotalCount").value(700))
+                .andExpect(jsonPath("$.Data.AcceptedCount").value(0))
+                .andExpect(jsonPath("$.Data.RejectedCount").value(700));
         assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_item where file_id = ?"
                 + " and processed_at is null", Integer.class, fileId)).isEqualTo(200);
         // The report agrees with the Rejected event: nothing of a Stopped file is released.

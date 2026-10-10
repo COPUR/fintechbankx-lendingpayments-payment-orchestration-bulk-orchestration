@@ -14,8 +14,9 @@ public record BulkFileStatusResponse(
                         file.fileId(),
                         file.status().apiValue(),
                         file.totalCount(),
-                        file.acceptedCount(),
-                        file.rejectedCount(),
+                        // What the file stands by: a Stopped file reports 0 accepted, like its report and event.
+                        file.releasedAcceptedCount(),
+                        file.releasedRejectedCount(),
                         file.createdAt().toString(),
                         file.processedAt() == null ? null : file.processedAt().toString()
                 ),

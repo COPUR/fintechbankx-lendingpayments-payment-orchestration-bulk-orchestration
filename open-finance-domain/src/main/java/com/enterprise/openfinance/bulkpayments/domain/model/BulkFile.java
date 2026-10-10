@@ -235,8 +235,25 @@ public final class BulkFile {
         }
         status = BulkFileStatus.STOPPED;
         processedAt = now;
-        domainEvents.add(new BulkFileRejected(UUID.randomUUID(), fileId, version + 1, now, totalCount, totalCount,
-                BulkFileRejected.Reason.CONSENT_NOT_USABLE));
+        domainEvents.add(new BulkFileRejected(UUID.randomUUID(), fileId, version + 1, now, totalCount,
+                releasedRejectedCount(), BulkFileRejected.Reason.CONSENT_NOT_USABLE));
+    }
+
+    /**
+     * Items the file stands by as accepted, the figure its status, its report and its events agree on. A
+     * STOPPED file releases nothing, so 0; any other file, the count accepted at validation.
+     * {@link #acceptedCount()} stays the validation figure as stored.
+     */
+    public int releasedAcceptedCount() {
+        return status == BulkFileStatus.STOPPED ? 0 : acceptedCount;
+    }
+
+    /**
+     * Items the file stands by as rejected: every item of a STOPPED file (as its Rejected event, reason
+     * CONSENT_NOT_USABLE, counts them); any other file, the count rejected at validation.
+     */
+    public int releasedRejectedCount() {
+        return status == BulkFileStatus.STOPPED ? totalCount : rejectedCount;
     }
 
     /** Returns the events raised since the last call and forgets them. */
@@ -308,10 +325,12 @@ public final class BulkFile {
         return totalCount;
     }
 
+    /** Items accepted at validation, as stored; see {@link #releasedAcceptedCount()} for what the file reports. */
     public int acceptedCount() {
         return acceptedCount;
     }
 
+    /** Items rejected at validation, as stored; see {@link #releasedRejectedCount()} for what the file reports. */
     public int rejectedCount() {
         return rejectedCount;
     }
