@@ -1,7 +1,9 @@
-# Accepted (Proposed, pending the API owner's review) 2026-10-08 with the move to a standalone service: the spec on main described the seed's draft body (FilePaymentId, TotalItems), not the API the monolith served; see api/openapi/ACCEPTED_BREAKING.md.
+# Accepted (Proposed, pending the API owner's review) 2026-10-10 with the move to a standalone service: the spec on main described the seed's draft (a multipart POST /payment-consents/{consentId}/file and a body with FilePaymentId, TotalItems), not the API the monolith served; see api/openapi/ACCEPTED_BREAKING.md.
 # The spec now documents the body the service reads (ConsentId, FileName, FileContent, FileHash, Currency, optional IntegrityMode). Currency is new and required: amounts are never validated or published without it.
+# POST /payment-consents/{consentId}/file (operationId uploadBulkFile) is removed: no controller ever mapped it and every unmapped route is denied by default, so no client could have used it. The upload is POST /open-finance/v1/file-payments.
 # Delete this file in the first PR after this one merges (scripts/ci/oasdiff-breaking.sh enforces it).
 POST /file-payments added the new required request property 'Data/Currency'
 POST /file-payments added the new required request property 'Data/FileContent'
 POST /file-payments added the new required request property 'Data/FileHash'
 POST /file-payments added the new required request property 'Data/FileName'
+POST /payment-consents/{consentId}/file api path removed without deprecation

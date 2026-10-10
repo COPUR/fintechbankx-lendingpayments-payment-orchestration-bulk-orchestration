@@ -9,39 +9,6 @@ info:
 servers:
   - url: https://api.example.com/open-finance/v1
 paths:
-  /payment-consents/{consentId}/file:
-    post:
-      summary: Upload bulk payment file
-      operationId: uploadBulkFile
-      security:
-        - dpopAuth: []
-      parameters:
-        - $ref: '#/components/parameters/InteractionId'
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - $ref: '#/components/parameters/JwsSignature'
-        - $ref: '#/components/parameters/Dpop'
-        - name: consentId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              properties:
-                file:
-                  type: string
-                  format: binary
-      responses:
-        '202':
-          description: File accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FilePaymentResponse'
   /file-payments:
     post:
       summary: Initiate bulk payment execution
