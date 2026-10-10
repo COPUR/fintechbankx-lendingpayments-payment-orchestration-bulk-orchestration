@@ -18,7 +18,7 @@ public final class BulkFilePersistenceMapper {
                 file.idempotencyKey(), file.requestHash(), file.fileName(), file.integrityMode().name(),
                 file.targetStatus().name(), file.totalCount(), file.acceptedCount(), file.rejectedCount(),
                 file.totalAmount().amount(), file.acceptedAmount().amount(), file.currency().getCurrencyCode(),
-                file.createdAt());
+                file.createdAt(), file.consentExpiresAt());
         copyProgress(file, entity);
         return entity;
     }
@@ -35,7 +35,7 @@ public final class BulkFilePersistenceMapper {
                 entity.getTotalCount(), entity.getAcceptedCount(), entity.getRejectedCount(),
                 new Money(entity.getTotalAmount(), currency(entity)),
                 new Money(entity.getAcceptedAmount(), currency(entity)), entity.getCreatedAt(), entity.getProcessedAt(),
-                entity.getVersion());
+                entity.getConsentExpiresAt(), entity.getVersion());
     }
 
     private static Currency currency(BulkFileJpaEntity entity) {

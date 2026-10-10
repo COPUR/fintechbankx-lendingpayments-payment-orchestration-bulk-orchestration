@@ -47,6 +47,7 @@ public final class BulkFile {
     private final Money acceptedAmount;
     private final Instant createdAt;
     private Instant processedAt;
+    private final Instant consentExpiresAt;
     private final long version;
     private final List<BulkFileEvent> domainEvents = new ArrayList<>();
 
@@ -67,6 +68,7 @@ public final class BulkFile {
                      Money acceptedAmount,
                      Instant createdAt,
                      Instant processedAt,
+                     Instant consentExpiresAt,
                      long version) {
         requireText(fileId, "fileId");
         requireText(consentId, "consentId");
@@ -143,11 +145,14 @@ public final class BulkFile {
         this.acceptedAmount = acceptedAmount;
         this.createdAt = createdAt;
         this.processedAt = processedAt;
+        this.consentExpiresAt = consentExpiresAt;
         this.version = version;
     }
 
     /**
      * Accepts a parsed upload for processing and raises {@link BulkFileAccepted}.
+     * {@code consentExpiresAt} is the consent's expiry as read at upload; a retry
+     * of the upload after it is refused ({@link #consentExpiredAt(Instant)}).
      */
     public static BulkFile accept(String fileId,
                                   String consentId,
@@ -157,17 +162,19 @@ public final class BulkFile {
                                   String fileName,
                                   BulkIntegrityMode integrityMode,
                                   ParsedBulkFile parsed,
+                                  Instant consentExpiresAt,
                                   Instant now) {
         Objects.requireNonNull(parsed, "parsed");
+        Objects.requireNonNull(consentExpiresAt, "consentExpiresAt");
         BulkFile file = new BulkFile(fileId, consentId, tppId, idempotencyKey, requestHash, fileName, integrityMode,
                 BulkFileStatus.PROCESSING, parsed.targetStatus(), 0, parsed.totalCount(), parsed.acceptedCount(),
-                parsed.rejectedCount(), parsed.totalAmount(), parsed.acceptedAmount(), now, null, 0L);
+                parsed.rejectedCount(), parsed.totalAmount(), parsed.acceptedAmount(), now, null, consentExpiresAt, 0L);
         file.domainEvents.add(new BulkFileAccepted(UUID.randomUUID(), file.fileId, 0L, now, file.consentId,
                 file.tppId, integrityMode, file.totalCount, file.acceptedCount, file.rejectedCount, file.totalAmount));
         return file;
     }
 
-    /** Rebuilds a stored file; raises no events. */
+    /** Rebuilds a stored file; raises no events. {@code consentExpiresAt} is null for files stored before it was kept. */
     public static BulkFile rehydrate(String fileId,
                                      String consentId,
                                      String tppId,
@@ -185,10 +192,11 @@ public final class BulkFile {
                                      Money acceptedAmount,
                                      Instant createdAt,
                                      Instant processedAt,
+                                     Instant consentExpiresAt,
                                      long version) {
         return new BulkFile(fileId, consentId, tppId, idempotencyKey, requestHash, fileName, integrityMode, status,
                 targetStatus, processedCount, totalCount, acceptedCount, rejectedCount, totalAmount, acceptedAmount,
-                createdAt, processedAt, version);
+                createdAt, processedAt, consentExpiresAt, version);
     }
 
     /**
@@ -261,6 +269,15 @@ public final class BulkFile {
         List<BulkFileEvent> events = List.copyOf(domainEvents);
         domainEvents.clear();
         return events;
+    }
+
+    /**
+     * The consent's expiry, read at upload, has passed at {@code now} (the consent service's rule: active while
+     * its expiry is after now). Unknown for files stored before the expiry was kept: never expired here.
+     */
+    public boolean consentExpiredAt(Instant now) {
+        Objects.requireNonNull(now, "now");
+        return consentExpiresAt != null && !consentExpiresAt.isAfter(now);
     }
 
     public boolean belongsToTpp(String candidateTppId) {
@@ -354,6 +371,11 @@ public final class BulkFile {
 
     public Instant processedAt() {
         return processedAt;
+    }
+
+    /** Consent expiry read at upload; null for files stored before it was kept. */
+    public Instant consentExpiresAt() {
+        return consentExpiresAt;
     }
 
     /** Version as loaded (0 for a file not yet stored); used for optimistic locking. */

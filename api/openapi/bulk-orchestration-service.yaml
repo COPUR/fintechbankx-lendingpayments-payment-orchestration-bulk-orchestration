@@ -102,9 +102,10 @@ paths:
             FORBIDDEN, message "Consent not usable for this request", for every consent the caller may not
             use (unknown, another TPP's, not authorised, revoked, expired, without INITIATEBULKPAYMENTS); the
             body never says which. A retry of an accepted upload (same key and body) is answered as its replay
-            (202, X-OF-Idempotency HIT) before the consent is read, except once the file is Stopped (its consent
-            stopped being usable during processing): that retry answers this 403, as the monolith refused a
-            retry under an unusable consent.
+            (202, X-OF-Idempotency HIT) before the consent is read, except, as the monolith refused a retry under
+            an unusable consent: once the consent's expiry read at upload has passed, 403 with message "Consent
+            expired"; once the file is Stopped (its consent stopped being usable during processing), 403
+            "Consent not usable for this request".
         '409':
           description: >-
             CONSENT_ALREADY_USED when the consent already authorised another file (a bulk consent
@@ -181,9 +182,10 @@ components:
       description: >-
         Unique per TPP and never reusable. A retry with the same key and body is a replay: 202 with header
         X-OF-Idempotency HIT and the file's current Status, without reading the consent again (it is used up
-        by this very file, and may since be revoked or expired). Once the file is Stopped (processing found
-        its consent no longer usable) a retry answers 403 "Consent not usable for this request" instead.
-        Another body under the key is 409 CONFLICT.
+        by this very file, and may since be revoked). Once the consent's expiry, as read at upload, has
+        passed, a retry answers 403 "Consent expired" instead; once the file is Stopped (processing found its
+        consent no longer usable), 403 "Consent not usable for this request". Another body under the key is
+        409 CONFLICT.
       schema:
         type: string
     JwsSignature:

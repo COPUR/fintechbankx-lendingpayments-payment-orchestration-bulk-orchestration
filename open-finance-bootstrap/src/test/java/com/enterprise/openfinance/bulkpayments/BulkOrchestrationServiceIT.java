@@ -423,15 +423,16 @@ class BulkOrchestrationServiceIT {
 
     /** Accept, the consent expires, retry: the replay is answered (HIT) before any consent check. */
     @Test
-    void aRetryOfAnAcceptedUploadIsReplayedAfterItsConsentExpired() throws Exception {
+    void aRetryOfAnAcceptedUploadIsReplayedAfterItsConsentWasRevoked() throws Exception {
         String content = csv("INS-1," + IBAN + ",10.00");
         String body = body("CONS-LAPSE", "payroll.csv", content, sha256(content), "PARTIAL_REJECTION");
         String fileId = json.readTree(mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
                         .header("x-idempotency-key", "IDEMP-LAPSE").contentType("application/json").content(body))
                 .andExpect(status().isAccepted())
                 .andReturn().getResponse().getContentAsString()).at("/Data/FilePaymentId").asText();
+        // Revoked in the consent service (not expired): revocation is not read before the replay.
         Mockito.doAnswer(call -> Optional.of(new BulkConsentContext(call.getArgument(0), "TPP-001",
-                        java.util.Set.of("INITIATEBULKPAYMENTS"), java.time.Instant.parse("2020-01-01T00:00:00Z"), false)))
+                        java.util.Set.of("INITIATEBULKPAYMENTS"), java.time.Instant.parse("2099-01-01T00:00:00Z"), false)))
                 .when(consents).findById(any());
 
         mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
@@ -447,6 +448,44 @@ class BulkOrchestrationServiceIT {
                         .content(body("CONS-LAPSE", "other.csv", other, sha256(other), "PARTIAL_REJECTION")))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.message").value("Consent not usable for this request"));
+    }
+
+    /**
+     * Parity with the monolith: a retry after the consent expired is 403 "Consent expired", decided from the
+     * expiry stored with the file at upload (V14 bulk_file.consent_expires_at), without reading the consent again.
+     */
+    @Test
+    void aRetryAfterTheConsentExpiredIs403ConsentExpiredLikeTheMonolith() throws Exception {
+        java.time.Instant expiry = java.time.Instant.now().plus(Duration.ofHours(1)).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        when(consents.findById("CONS-EXPIRY")).thenReturn(Optional.of(new BulkConsentContext("CONS-EXPIRY", "TPP-001",
+                java.util.Set.of("INITIATEBULKPAYMENTS"), expiry, true)));
+        String content = csv("INS-1," + IBAN + ",10.00");
+        String body = body("CONS-EXPIRY", "payroll.csv", content, sha256(content), "PARTIAL_REJECTION");
+        String fileId = json.readTree(mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-EXPIRY").contentType("application/json").content(body))
+                .andExpect(status().isAccepted())
+                .andReturn().getResponse().getContentAsString()).at("/Data/FilePaymentId").asText();
+        assertThat(jdbc.queryForObject("select consent_expires_at from " + SCHEMA + ".bulk_file where file_id = ?",
+                java.sql.Timestamp.class, fileId).toInstant()).isEqualTo(expiry);
+
+        // Before expiry: the replay.
+        mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-EXPIRY").contentType("application/json").content(body))
+                .andExpect(status().isAccepted())
+                .andExpect(header().string("X-OF-Idempotency", "HIT"));
+
+        // The stored expiry passes (moved into the past rather than waiting an hour).
+        PostgresTestDatabase.owner().update("update " + SCHEMA + ".bulk_file set consent_expires_at = now() - interval '1 second'"
+                + " where file_id = ?", fileId);
+        Mockito.clearInvocations(consents);
+        mvc.perform(asTpp(post("/open-finance/v1/file-payments"))
+                        .header("x-idempotency-key", "IDEMP-EXPIRY").contentType("application/json").content(body))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"))
+                .andExpect(jsonPath("$.message").value("Consent expired"));
+        Mockito.verify(consents, Mockito.never()).findById(any());
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_file where consent_id = 'CONS-EXPIRY'",
+                Integer.class)).isEqualTo(1);
     }
 
     @Test

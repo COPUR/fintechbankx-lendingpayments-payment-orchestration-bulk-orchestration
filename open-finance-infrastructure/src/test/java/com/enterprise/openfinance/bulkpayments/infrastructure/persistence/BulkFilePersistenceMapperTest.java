@@ -44,6 +44,8 @@ class BulkFilePersistenceMapperTest {
         assertThat(entity.getCurrency()).isEqualTo("AED");
         assertThat(back.totalAmount()).isEqualTo(Money.of("30.00", "AED"));
         assertThat(back.acceptedAmount()).isEqualTo(Money.of("10.00", "AED"));
+        assertThat(entity.getConsentExpiresAt()).isEqualTo(AT.plusSeconds(86_400));
+        assertThat(back.consentExpiresAt()).isEqualTo(AT.plusSeconds(86_400));
         assertThat(back.createdAt()).isEqualTo(AT);
         assertThat(back.processedAt()).isNull();
         assertThat(back.version()).isZero();
@@ -70,6 +72,6 @@ class BulkFilePersistenceMapperTest {
                 BulkItemResult.rejected(2, "INS-2", "AE000", Money.of("20.00", "AED"), "Invalid IBAN")),
                 2, 1, 1, Money.of("30.00", "AED"), Money.of("10.00", "AED"), BulkFileStatus.VALIDATED);
         return BulkFile.accept("FILE-1", "CONS-1", "TPP-001", "IDEMP-1", "hash", "payroll.csv",
-                BulkIntegrityMode.FULL_REJECTION, parsed, AT);
+                BulkIntegrityMode.FULL_REJECTION, parsed, AT.plusSeconds(86_400), AT);
     }
 }

@@ -199,6 +199,7 @@ class BulkPaymentsControllerUnitTest {
                 Money.of("10.00", "AED"),
                 Instant.parse("2026-02-09T10:00:00Z"),
                 processedAt,
+                null,
                 0L
         );
     }

@@ -345,6 +345,43 @@ class BulkPaymentServiceTest {
                 BulkIntegrityMode.PARTIAL_REJECTION))).isInstanceOf(IdempotencyConflictException.class);
     }
 
+    /**
+     * Parity with the monolith (it checked the consent before the replay): a retry after the consent's expiry is
+     * 403 "Consent expired". The expiry is the one read at upload and stored with the file, checked against the
+     * application clock with no remote read; revocation is still not checked before the replay.
+     */
+    @Test
+    void aRetryAfterTheConsentExpiredIsRefusedLikeTheMonolithFromTheStoredExpiry() {
+        java.util.concurrent.atomic.AtomicReference<Instant> now =
+                new java.util.concurrent.atomic.AtomicReference<>(Instant.parse("2026-02-09T10:00:00Z"));
+        Clock movingClock = new Clock() {
+            @Override public java.time.ZoneId getZone() { return ZoneOffset.UTC; }
+            @Override public Clock withZone(java.time.ZoneId zone) { return this; }
+            @Override public Instant instant() { return now.get(); }
+        };
+        BulkPaymentService service = new BulkPaymentService(consentPort, bindingPort, filePort, itemPort,
+                idempotencyPort, cachePort, publisher, settings(2), movingClock, transactions);
+        consentPort.data.put("CONS-IDEMP-EXP", new BulkConsentContext("CONS-IDEMP-EXP", "TPP-001",
+                Set.of("INITIATEBULKPAYMENTS"), Instant.parse("2026-02-09T12:00:00Z"), true));
+        String content = validCsv("INS-1," + IBAN + ",10.00");
+        BulkUploadResult accepted = service.submitFile(command("IDEMP-EXP", content, BulkIntegrityMode.PARTIAL_REJECTION));
+
+        now.set(Instant.parse("2026-02-09T11:59:59Z"));
+        assertThat(service.submitFile(command("IDEMP-EXP", content, BulkIntegrityMode.PARTIAL_REJECTION))
+                .idempotencyReplay()).as("before expiry: replay").isTrue();
+
+        now.set(Instant.parse("2026-02-09T12:00:00Z"));
+        int readsBefore = consentPort.reads.get("CONS-IDEMP-EXP");
+        assertThatThrownBy(() -> service.submitFile(command("IDEMP-EXP", content, BulkIntegrityMode.PARTIAL_REJECTION)))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessage(ForbiddenException.CONSENT_EXPIRED);
+        assertThat(consentPort.reads.get("CONS-IDEMP-EXP")).as("decided locally").isEqualTo(readsBefore);
+        assertThat(filePort.data).containsOnlyKeys(accepted.fileId());
+        // Another body under the key is still the idempotency conflict.
+        assertThatThrownBy(() -> service.submitFile(command("IDEMP-EXP", validCsv("INS-9," + IBAN + ",9.00"),
+                BulkIntegrityMode.PARTIAL_REJECTION))).isInstanceOf(IdempotencyConflictException.class);
+    }
+
     @Test
     void anAcceptedUploadIsReplayedEvenAfterItsConsentStoppedBeingUsable() {
         BulkPaymentService service = service(settings(2));
@@ -678,7 +715,7 @@ class BulkPaymentServiceTest {
             return BulkFile.rehydrate(f.fileId(), f.consentId(), f.tppId(), f.idempotencyKey(), f.requestHash(),
                     f.fileName(), f.integrityMode(), f.status(), f.targetStatus(), f.processedCount(),
                     f.totalCount(), f.acceptedCount(), f.rejectedCount(), f.totalAmount(), f.acceptedAmount(),
-                    f.createdAt(), f.processedAt(), version);
+                    f.createdAt(), f.processedAt(), f.consentExpiresAt(), version);
         }
     }
 

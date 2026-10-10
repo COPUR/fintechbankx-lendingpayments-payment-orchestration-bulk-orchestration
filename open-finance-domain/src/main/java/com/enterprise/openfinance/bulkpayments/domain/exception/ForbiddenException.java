@@ -9,6 +9,12 @@ public class ForbiddenException extends RuntimeException {
      */
     public static final String CONSENT_NOT_USABLE = "Consent not usable for this request";
 
+    /**
+     * A retry of the caller's own upload after the consent's expiry, as the monolith answered it (it checked
+     * the consent before the replay). The caller owns the file, so naming the cause discloses nothing.
+     */
+    public static final String CONSENT_EXPIRED = "Consent expired";
+
     public ForbiddenException(String message) {
         super(message);
     }

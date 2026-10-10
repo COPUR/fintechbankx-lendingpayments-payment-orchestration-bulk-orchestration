@@ -69,6 +69,10 @@ public class BulkFileJpaEntity {
     @Column(name = "processed_at")
     private Instant processedAt;
 
+    /** Consent expiry read at upload (V14); null for files stored before it. */
+    @Column(name = "consent_expires_at", updatable = false)
+    private Instant consentExpiresAt;
+
     @Version
     @Column(name = "version", nullable = false)
     private long version;
@@ -80,7 +84,7 @@ public class BulkFileJpaEntity {
     BulkFileJpaEntity(String fileId, String consentId, String tppId, String idempotencyKey, String requestHash,
                       String fileName, String integrityMode, String targetStatus, int totalCount,
                       int acceptedCount, int rejectedCount, BigDecimal totalAmount, BigDecimal acceptedAmount,
-                      String currency, Instant createdAt) {
+                      String currency, Instant createdAt, Instant consentExpiresAt) {
         this.fileId = fileId;
         this.consentId = consentId;
         this.tppId = tppId;
@@ -96,6 +100,7 @@ public class BulkFileJpaEntity {
         this.acceptedAmount = acceptedAmount;
         this.currency = currency;
         this.createdAt = createdAt;
+        this.consentExpiresAt = consentExpiresAt;
     }
 
     /** Copies the fields the aggregate may change after creation. */
@@ -123,5 +128,6 @@ public class BulkFileJpaEntity {
     public String getCurrency() { return currency; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getProcessedAt() { return processedAt; }
+    public Instant getConsentExpiresAt() { return consentExpiresAt; }
     public long getVersion() { return version; }
 }

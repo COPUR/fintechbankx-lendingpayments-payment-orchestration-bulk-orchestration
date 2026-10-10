@@ -17,6 +17,7 @@ class BulkFileTest {
     private static final Instant UPLOADED = Instant.parse("2026-02-09T10:00:00Z");
     private static final Instant BATCH_1 = Instant.parse("2026-02-09T10:00:01Z");
     private static final Instant BATCH_2 = Instant.parse("2026-02-09T10:00:02Z");
+    private static final Instant CONSENT_EXPIRES = Instant.parse("2026-02-10T10:00:00Z");
 
     @Test
     void acceptRaisesAcceptedEventWithTheParsedFigures() {
@@ -132,7 +133,7 @@ class BulkFileTest {
 
         assertThatThrownBy(() -> BulkFile.rehydrate("FILE", "CONS", "TPP", "IDEMP", "hash", "file.csv",
                 BulkIntegrityMode.PARTIAL_REJECTION, BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 0, 1, 1, 0,
-                Money.of("10.00", "AED"), Money.of("10", "JPY"), UPLOADED, null, 0))
+                Money.of("10.00", "AED"), Money.of("10", "JPY"), UPLOADED, null, null, 0))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("currency");
     }
@@ -209,6 +210,26 @@ class BulkFileTest {
         assertThat(file.releasedRejectedCount()).isEqualTo(1);
     }
 
+    /** The consent service's rule: active while its expiry is after now; so expired from that instant on. */
+    @Test
+    void theConsentExpiryReadAtUploadIsKeptAndPassesAtThatInstant() {
+        BulkFile file = accept(parsed(1, 1, 0, "10", "10", BulkFileStatus.VALIDATED));
+
+        assertThat(file.consentExpiresAt()).isEqualTo(CONSENT_EXPIRES);
+        assertThat(file.consentExpiredAt(CONSENT_EXPIRES.minusNanos(1000))).isFalse();
+        assertThat(file.consentExpiredAt(CONSENT_EXPIRES)).isTrue();
+        assertThat(rehydrateAsStored(file, 0L).consentExpiredAt(CONSENT_EXPIRES)).isTrue();
+
+        BulkFile storedBeforeV14 = BulkFile.rehydrate("FILE", "CONS", "TPP", "IDEMP", "hash", "file.csv",
+                BulkIntegrityMode.PARTIAL_REJECTION, BulkFileStatus.PROCESSING, BulkFileStatus.VALIDATED, 0, 1, 1, 0,
+                Money.of("10", "AED"), Money.of("10", "AED"), UPLOADED, null, null, 0);
+        assertThat(storedBeforeV14.consentExpiresAt()).isNull();
+        assertThat(storedBeforeV14.consentExpiredAt(Instant.parse("2100-01-01T00:00:00Z"))).as("unknown").isFalse();
+        assertThatThrownBy(() -> BulkFile.accept("FILE", "CONS", "TPP", "IDEMP", "hash", "file.csv",
+                BulkIntegrityMode.PARTIAL_REJECTION, parsed(1, 1, 0, "10", "10", BulkFileStatus.VALIDATED), null, UPLOADED))
+                .isInstanceOf(NullPointerException.class);
+    }
+
     @Test
     void anAllRejectedFileSaysWhyItWasRejected() {
         BulkFile file = accept(parsed(1, 0, 1, "10.00", "0", BulkFileStatus.REJECTED));
@@ -221,14 +242,15 @@ class BulkFileTest {
 
     private static BulkFile accept(ParsedBulkFile parsed) {
         return BulkFile.accept("FILE-001", "CONS-BULK-001", "TPP-001", "IDEMP-001", "hash-1", "payroll.csv",
-                BulkIntegrityMode.PARTIAL_REJECTION, parsed, UPLOADED);
+                BulkIntegrityMode.PARTIAL_REJECTION, parsed, CONSENT_EXPIRES, UPLOADED);
     }
 
     private static BulkFile rehydrateAsStored(BulkFile file, long version) {
         return BulkFile.rehydrate(file.fileId(), file.consentId(), file.tppId(), file.idempotencyKey(),
                 file.requestHash(), file.fileName(), file.integrityMode(), file.status(), file.targetStatus(),
                 file.processedCount(), file.totalCount(), file.acceptedCount(), file.rejectedCount(),
-                file.totalAmount(), file.acceptedAmount(), file.createdAt(), file.processedAt(), version);
+                file.totalAmount(), file.acceptedAmount(), file.createdAt(), file.processedAt(),
+                file.consentExpiresAt(), version);
     }
 
     private static ParsedBulkFile parsed(int total, int accepted, int rejected, String totalAmount,
@@ -250,7 +272,7 @@ class BulkFileTest {
         assertThatThrownBy(() -> BulkFile.rehydrate(fileId, "CONS", "TPP", "IDEMP", "hash", "file.csv",
                 BulkIntegrityMode.PARTIAL_REJECTION, status, targetStatus, processedCount, totalCount, acceptedCount,
                 rejectedCount, Money.of(totalAmount, "AED"), Money.of(acceptedAmount, "AED"), createdAt, processedAt,
-                version))
+                null, version))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(expectedMessage);
     }

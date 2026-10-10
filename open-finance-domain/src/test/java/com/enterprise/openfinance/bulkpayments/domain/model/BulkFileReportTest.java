@@ -40,7 +40,7 @@ class BulkFileReportTest {
         Instant uploaded = Instant.parse("2026-02-09T10:00:00Z");
         BulkFile stopped = BulkFile.rehydrate("FILE-001", "CONS-1", "TPP-001", "IDEMP-1", "hash", "payroll.csv",
                 BulkIntegrityMode.PARTIAL_REJECTION, BulkFileStatus.STOPPED, BulkFileStatus.VALIDATED, 1, 3, 2, 1,
-                Money.of("35.00", "AED"), Money.of("30.00", "AED"), uploaded, uploaded.plusSeconds(2), 2L);
+                Money.of("35.00", "AED"), Money.of("30.00", "AED"), uploaded, uploaded.plusSeconds(2), null, 2L);
         List<BulkItemResult> stored = List.of(
                 BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", Money.of("10.00", "AED")),
                 BulkItemResult.accepted(2, "INS-2", "AE120001000000000000000001", Money.of("20.00", "AED")),
@@ -64,7 +64,7 @@ class BulkFileReportTest {
         Instant uploaded = Instant.parse("2026-02-09T10:00:00Z");
         BulkFile validated = BulkFile.rehydrate("FILE-001", "CONS-1", "TPP-001", "IDEMP-1", "hash", "payroll.csv",
                 BulkIntegrityMode.PARTIAL_REJECTION, BulkFileStatus.VALIDATED, BulkFileStatus.VALIDATED, 2, 2, 1, 1,
-                Money.of("15.00", "AED"), Money.of("10.00", "AED"), uploaded, uploaded.plusSeconds(2), 2L);
+                Money.of("15.00", "AED"), Money.of("10.00", "AED"), uploaded, uploaded.plusSeconds(2), null, 2L);
         List<BulkItemResult> stored = List.of(
                 BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", Money.of("10.00", "AED")),
                 BulkItemResult.rejected(2, "INS-2", "AE999", Money.of("5.00", "AED"), "Invalid IBAN"));

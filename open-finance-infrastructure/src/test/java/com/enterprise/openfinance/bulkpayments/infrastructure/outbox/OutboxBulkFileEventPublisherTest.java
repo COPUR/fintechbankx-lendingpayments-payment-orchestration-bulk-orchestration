@@ -85,6 +85,6 @@ class OutboxBulkFileEventPublisherTest {
                 List.of(BulkItemResult.accepted(1, "INS-1", "AE120001000000000000000001", Money.of("10", "AED"))),
                 1, 1, 0, Money.of("10", "AED"), Money.of("10", "AED"), BulkFileStatus.VALIDATED);
         return BulkFile.accept("FILE-1", "CONS-1", "TPP-001", "IDEMP-1", "hash", "f.csv",
-                BulkIntegrityMode.PARTIAL_REJECTION, parsed, Instant.parse("2026-02-09T10:00:00Z"));
+                BulkIntegrityMode.PARTIAL_REJECTION, parsed, Instant.parse("2099-01-01T00:00:00Z"), Instant.parse("2026-02-09T10:00:00Z"));
     }
 }

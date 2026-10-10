@@ -20,7 +20,7 @@ class BulkConsentBindingTest {
                 + IBAN + ",2";
         BulkFile file = BulkFile.accept("FILE-1", "CONS-1", "TPP-001", "IDEMP-1", "hash", "payroll.csv",
                 BulkIntegrityMode.PARTIAL_REJECTION,
-                BulkFileParser.parse(content, BulkIntegrityMode.PARTIAL_REJECTION, Currency.getInstance("KWD")), NOW);
+                BulkFileParser.parse(content, BulkIntegrityMode.PARTIAL_REJECTION, Currency.getInstance("KWD")), NOW.plusSeconds(3600), NOW);
 
         BulkConsentBinding binding = BulkConsentBinding.of(file, "sha-of-file", NOW);
 

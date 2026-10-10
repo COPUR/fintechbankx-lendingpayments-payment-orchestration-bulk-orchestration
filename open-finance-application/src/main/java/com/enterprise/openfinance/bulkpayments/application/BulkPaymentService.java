@@ -83,9 +83,11 @@ public class BulkPaymentService implements BulkPaymentUseCase {
     /**
      * The idempotency record is read first: a retry of an accepted upload is
      * answered as its replay, without reading the consent again (it may be used
-     * up by this very file). The exception is what is known locally: a file
-     * Stopped because its consent stopped being usable is refused with the one
-     * 403 body, as the monolith refused a retry under an unusable consent. Only
+     * up by this very file). The exceptions are what is known locally, as the
+     * monolith refused a retry under an unusable consent: once the consent's
+     * expiry read at upload has passed (application clock), 403 "Consent
+     * expired"; a file Stopped because its consent stopped being usable, the
+     * one 403 body. Revocation is not known locally and not checked here. Only
      * a new upload reads the consent from the consent service. The consent call, the size and hash checks and the parse run
      * before any transaction, so no database connection is held while the
      * consent service answers or a large file is parsed. The transaction starts
@@ -100,7 +102,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
             return replay.orElseThrow();
         }
 
-        validateConsent(command.consentId(), command.tppId(), now);
+        BulkConsentContext consent = validateConsent(command.consentId(), command.tppId(), now);
         Currency currency = BulkFileParser.currency(command.currency());
         BulkFileParser.verifyPayload(command.fileContent(), settings.maxFileSizeBytes());
         BulkFileParser.verifyHash(command.fileContent(), command.fileHash());
@@ -108,7 +110,7 @@ public class BulkPaymentService implements BulkPaymentUseCase {
         ParsedBulkFile parsed = BulkFileParser.parse(command.fileContent(), command.integrityMode(), currency);
         BulkFile file = BulkFile.accept("FILE-BULK-" + UUID.randomUUID(), command.consentId(), command.tppId(),
                 command.idempotencyKey(), command.requestHash(), command.fileName(), command.integrityMode(),
-                parsed, now);
+                parsed, consent.expiresAt(), now);
 
         return transactions.execute(status -> store(command, parsed, file, now));
     }
@@ -176,6 +178,12 @@ public class BulkPaymentService implements BulkPaymentUseCase {
                     }
                     BulkFile file = filePort.findById(record.fileId())
                             .orElseThrow(() -> new ResourceNotFoundException("Bulk file not found for idempotency record"));
+                    if (file.consentExpiredAt(now)) {
+                        // Known locally: the consent's expiry, read at upload, has passed. The monolith checked
+                        // the consent before replaying and answered 403 "Consent expired"; so do we, without a
+                        // remote read. Revocation is not known locally and is not checked here.
+                        throw new ForbiddenException(ForbiddenException.CONSENT_EXPIRED);
+                    }
                     if (file.status() == BulkFileStatus.STOPPED) {
                         // Known locally: the file was stopped because its consent is no longer usable. The
                         // monolith checked the consent before replaying and refused; so do we, without a remote read.
@@ -187,16 +195,13 @@ public class BulkPaymentService implements BulkPaymentUseCase {
     }
 
     /** Every refusal is the same 403: the caller learns nothing about another party's consent. */
-    private void validateConsent(String consentId, String tppId, Instant now) {
-        boolean usable = consentPort.findById(consentId)
+    private BulkConsentContext validateConsent(String consentId, String tppId, Instant now) {
+        return consentPort.findById(consentId)
                 .filter(consent -> consent.belongsToTpp(tppId))
                 .filter(BulkConsentContext::isAuthorized)
                 .filter(consent -> consent.isActive(now))
                 .filter(BulkConsentContext::allowsBulkInitiation)
-                .isPresent();
-        if (!usable) {
-            throw new ForbiddenException(ForbiddenException.CONSENT_NOT_USABLE);
-        }
+                .orElseThrow(() -> new ForbiddenException(ForbiddenException.CONSENT_NOT_USABLE));
     }
 
     private static String reportCacheKey(String fileId, String tppId) {
