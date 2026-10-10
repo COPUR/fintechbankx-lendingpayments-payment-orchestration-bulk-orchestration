@@ -60,6 +60,35 @@ class DatabaseMigrationIT {
                 PostgresTestDatabase.RUNTIME_ROLE, SCHEMA)).isTrue();
     }
 
+    /**
+     * ADR-019 expand step (governance round 3, item 4): V15 keeps outbox_event.topic, nullable and no longer
+     * written; the relay ignores it (OutboxRelay.TOPIC) and a later versioned migration drops it. The column
+     * comment names the migration that deprecated it.
+     */
+    @Test
+    void migrateKeepsTheOutboxTopicColumnNullableAndDeprecatedSinceV15() {
+        PostgresTestDatabase.prepare(SCHEMA);
+
+        int exitCode = BulkOrchestrationApplication.run(
+                "migrate",
+                arg("spring.datasource.url", PostgresTestDatabase.url()),
+                arg("DB_USERNAME", PostgresTestDatabase.RUNTIME_ROLE),
+                arg("spring.flyway.user", PostgresTestDatabase.ownerUser()),
+                arg("spring.flyway.password", PostgresTestDatabase.ownerCredential()),
+                arg("spring.flyway.schemas", SCHEMA),
+                arg("spring.flyway.default-schema", SCHEMA));
+
+        assertThat(exitCode).isZero();
+        JdbcTemplate owner = PostgresTestDatabase.owner();
+        assertThat(owner.queryForObject("select is_nullable from information_schema.columns"
+                + " where table_schema = ? and table_name = 'outbox_event' and column_name = 'topic'", String.class, SCHEMA))
+                .as("expand only: the column stays, nullable").isEqualTo("YES");
+        assertThat(owner.queryForObject("select col_description(c.oid, a.attnum) from pg_class c"
+                + " join pg_namespace n on n.oid = c.relnamespace join pg_attribute a on a.attrelid = c.oid"
+                + " where n.nspname = ? and c.relname = 'outbox_event' and a.attname = 'topic'", String.class, SCHEMA))
+                .startsWith("Deprecated since V15,");
+    }
+
     @Test
     void migrateFailsWithANonZeroExitCodeWhenTheSchemaWasNotBootstrapped() {
         int exitCode = BulkOrchestrationApplication.run(
