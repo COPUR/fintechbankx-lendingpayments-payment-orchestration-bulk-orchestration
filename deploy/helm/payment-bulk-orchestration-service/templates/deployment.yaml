@@ -79,11 +79,14 @@ spec:
             # Path of the mounted RDS CA bundle (shared-chart convention, cicd-templates 4f0f266).
             - name: DB_SSL_ROOT_CERT
               value: {{ printf "%s/%s" (trimSuffix "/" .Values.rdsCaBundle.mountPath) .Values.rdsCaBundle.key | quote }}
-          {{- if .Values.kafkaStrimzi.enabled }}
+            # The Kafka profile and protocol come from the boolean kafkaStrimzi.enabled only (guardrail 4a):
+            # kafka-msk (IAM over SASL_SSL) or kafka-strimzi (mutual TLS, SSL). No value names a profile
+            # (bulk.guardEnv refuses spring.profiles.* and KAFKA_SECURITY_PROTOCOL in config).
             - name: SPRING_PROFILES_ACTIVE
-              value: kafka-strimzi
+              value: {{ ternary "kafka-strimzi" "kafka-msk" .Values.kafkaStrimzi.enabled }}
             - name: KAFKA_SECURITY_PROTOCOL
-              value: SSL
+              value: {{ ternary "SSL" "SASL_SSL" .Values.kafkaStrimzi.enabled }}
+          {{- if .Values.kafkaStrimzi.enabled }}
             - name: KAFKA_TLS_CERT
               valueFrom:
                 secretKeyRef:

@@ -75,106 +75,92 @@ ExternalSecret adds its own (service or db-migration).
 {{- end -}}
 
 {{- /*
-Environment the chart refuses to render (governance round 3, item 1).
-- Spring config redirection: SPRING_CONFIG_IMPORT, SPRING_CONFIG_LOCATION and
-  SPRING_CONFIG_ADDITIONAL_LOCATION would point the service at another
-  configuration source. A configtree is allowed only as a value this chart itself
-  renders, on the fixed mount optional:configtree:/etc/fintechbankx/config/ (this
-  chart renders none today).
-- Datasource and Flyway URL keys (SPRING_DATASOURCE_URL, SPRING_FLYWAY_URL) would
-  bypass the DB_URL verify-full check in configmap.yaml.
-- FINTECHBANKX_TLS_ENFORCE would switch off the service's startup TLS assertion
-  (fintechbankx.tls.enforce, true by default; only local and test configuration
-  set it false, never the chart).
-Keys are compared whatever their case, with "." and "-" read as "_" (Spring's
-relaxed binding); values are searched for the same names, so a
-JAVA_TOOL_OPTIONS=-Dspring.config.import=... does not slip through either.
-Usage: include "bulk.guardEnv" (list "config" .Values.config)
+Values guard (governance round 3, item 1; round 6, guardrail 4a). Two layers:
+1. The platform rules, vendored verbatim in _fbx-guard.tpl (cicd-templates
+   charts/fintechbankx-service/templates/_helpers.tpl at 2caa48f, sha256 pinned
+   in README.md and the deployability workflow): fbx.validateDatabaseTls parses
+   every PostgreSQL JDBC URL in config the way PgJDBC does (exactly one
+   lower-case sslmode=verify-full, exactly one sslrootcert equal to the mounted
+   RDS CA bundle, no sslfactory/sslfactoryarg/sslhostnameverifier/
+   sslpasswordcallback/service, no percent-encoded '=' or '&', no TLS key before
+   the '?'), refuses the datasource, Flyway, Liquibase, R2DBC, application.json,
+   jdbc_url, sslfactory, sslhostnameverifier, spring.config.* and
+   spring.profiles.(active|include) names, and checks JVM option values. Those
+   helpers read .Values.databaseCa, .Values.extraEnv, .Values.javaToolOptions and
+   .Values.externalSecret.{data,extraData}; bulk.guardValues feeds them an
+   adapter dict from this chart's values (rdsCaBundle; config; no extraEnv; the
+   service ExternalSecret's fixed keys). The migration Job's ExternalSecret
+   (SPRING_FLYWAY_USER, SPRING_FLYWAY_PASSWORD, the schema owner credential, Job
+   only) is the chart's own and is not a values-named key, so it is not passed.
+2. This repo's additions (bulk.guardEnv, below), on names normalised the way
+   Spring's relaxed binding reads them (upper case, '.', '-', '[' and ']' as '_'):
+   - the indexed and suffixed config forms (SPRING_CONFIG_IMPORT_0,
+     spring.config.import[0]) and spring.profiles.(active|include|default|group...)
+     in every form, because a profile activates an application-<profile>.yml in
+     the image (the local profile switches the startup TLS assertion off). The
+     chart renders SPRING_PROFILES_ACTIVE itself from the boolean
+     kafkaStrimzi.enabled (kafka-msk or kafka-strimzi, templates/deployment.yaml);
+   - fintechbankx[._-]?tls in any form (the assertion's switch);
+   - spring.kafka.*security.protocol, spring.kafka.properties.* and
+     KAFKA_SECURITY_PROTOCOL (the chart renders the latter from
+     kafkaStrimzi.enabled: SASL_SSL or SSL);
+   - JVM option values (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS; the
+     image entrypoint reads no JAVA_OPTS) may not mention fintechbankx or kafka
+     either;
+   - a non-scalar config value (a dotted name given to --set becomes a nested
+     map that would render as an env name "spring"; quote it in a values file,
+     where the name rules apply).
+Usage: include "bulk.guardValues" $
 */ -}}
-{{- define "bulk.guardEnv" -}}
-{{- $field := index . 0 -}}
-{{- $env := index . 1 -}}
-{{- $forbidden := list "SPRING_CONFIG_IMPORT" "SPRING_CONFIG_LOCATION" "SPRING_CONFIG_ADDITIONAL_LOCATION" "SPRING_DATASOURCE_URL" "SPRING_FLYWAY_URL" "FINTECHBANKX_TLS_ENFORCE" -}}
-{{- range $key, $value := $env -}}
-{{- $normalKey := regexReplaceAll "[.-]" (upper $key) "_" -}}
-{{- $normalValue := regexReplaceAll "[.-]" (upper (toString $value)) "_" -}}
-{{- range $name := $forbidden -}}
-{{- if eq $normalKey $name -}}
-{{- fail (printf "%s.%s is not allowed: the chart renders this Spring setting itself (templates/_helpers.tpl, bulk.guardEnv)" $field $key) -}}
-{{- end -}}
-{{- if contains $name $normalValue -}}
-{{- fail (printf "%s.%s must not carry %s in its value (templates/_helpers.tpl, bulk.guardEnv)" $field $key $name) -}}
-{{- end -}}
-{{- end -}}
+{{- define "bulk.guardValues" -}}
+{{- $adapter := dict "Values" (dict
+      "config" .Values.config
+      "extraEnv" (list)
+      "javaToolOptions" ""
+      "externalSecret" (dict "enabled" .Values.externalSecret.enabled
+                             "data" (list (dict "secretKey" "SPRING_DATASOURCE_PASSWORD") (dict "secretKey" "SERVICE_CLIENT_SECRET"))
+                             "extraData" (list))
+      "databaseCa" (dict "enabled" true "mountPath" .Values.rdsCaBundle.mountPath "key" .Values.rdsCaBundle.key)) -}}
+{{- include "fbx.validateDatabaseTls" $adapter -}}
+{{- include "bulk.guardEnv" (list "config" .Values.config) -}}
+{{- if not (kindIs "bool" .Values.kafkaStrimzi.enabled) -}}
+{{- fail (printf "kafkaStrimzi.enabled must be a boolean (it selects the kafka-msk or kafka-strimzi profile), got %q" (toString .Values.kafkaStrimzi.enabled)) -}}
 {{- end -}}
 {{- end -}}
 
-{{- /*
-JDBC URL check (governance round 6, guardrail 4a; port of cicd-templates
-fbx.validateJdbcUrl at 2caa48f). Applied to config.DB_URL and to every config
-value that starts with jdbc:[<wrapper>:]postgresql: (case-insensitive). The URL
-is parsed the way PgJDBC parses it, not searched by substring:
-  - split once at the first '?', then split the query on '&'; a key is the text
-    before its first '=' (so applicationName=sslmode=verify-full is not an sslmode);
-  - sslmode appears exactly once, in lower case, with the value verify-full (the
-    driver reads keys case-sensitively: SSLMODE is ignored and the connection
-    falls back to sslmode=prefer; with two sslmode keys the last one wins);
-  - sslrootcert appears exactly once and is the mounted RDS CA bundle
-    (rdsCaBundle.mountPath/rdsCaBundle.key), so no decoy before the real one;
-  - sslfactory, sslfactoryarg, sslhostnameverifier, sslpasswordcallback and
-    service are refused (they bypass certificate or host name verification, or
-    load TLS settings from pg_service.conf);
-  - no percent-encoded '=' (%3D) or '&' (%26) anywhere in the query, every key
-    is plain [A-Za-z0-9_.-]+ (so no percent-encoded key either), and no TLS key
-    before the '?'.
-Usage: include "bulk.validateJdbcUrl" (dict "root" $ "where" "config.DB_URL" "url" $url)
-*/ -}}
-{{- define "bulk.validateJdbcUrl" -}}
-{{- $where := .where -}}
-{{- $url := trim (toString .url) -}}
-{{- if regexMatch "(?i)^jdbc:(?:[a-z0-9-]+:)*postgresql:" $url -}}
-{{- $ca := .root.Values.rdsCaBundle -}}
-{{- $want := printf "%s/%s" (trimSuffix "/" (toString $ca.mountPath)) (toString $ca.key) -}}
-{{- $parts := regexSplit "\\?" $url 2 -}}
-{{- $base := index $parts 0 -}}
-{{- $query := "" -}}
-{{- if eq (len $parts) 2 -}}{{- $query = index $parts 1 -}}{{- end -}}
-{{- if regexMatch "(?i)ssl(mode|rootcert|factory|factoryarg|hostnameverifier|passwordcallback)" $base -}}
-{{- fail (printf "%s must carry TLS parameters only in the query string (after '?')" $where) -}}
+{{- /* Spring's relaxed binding: upper case, '.' and '-' as '_'; a bracket index ([0]) folds to _0_ so the indexed rules see it. */ -}}
+{{- define "bulk.normalEnvName" -}}
+{{- regexReplaceAll "[.\\[\\]-]" (upper (toString .)) "_" -}}
 {{- end -}}
-{{- if regexMatch "(?i)%(3d|26)" $query -}}
-{{- fail (printf "%s must not percent-encode '=' or '&' in the query string" $where) -}}
-{{- end -}}
-{{- $modes := list -}}
-{{- $roots := list -}}
-{{- range $param := splitList "&" $query -}}
-{{- if $param -}}
-{{- $kv := regexSplit "=" $param 2 -}}
-{{- $key := index $kv 0 -}}
-{{- $val := "" -}}
-{{- if eq (len $kv) 2 -}}{{- $val = index $kv 1 -}}{{- end -}}
-{{- if not (regexMatch "^[A-Za-z0-9_.-]+$" $key) -}}
-{{- fail (printf "%s has a query parameter name that is not plain [A-Za-z0-9_.-] (percent-encoding is not allowed): %q" $where $key) -}}
-{{- end -}}
-{{- $lk := lower $key -}}
-{{- if has $lk (list "sslfactory" "sslfactoryarg" "sslhostnameverifier" "sslpasswordcallback" "service") -}}
-{{- fail (printf "%s must not set %s (it can bypass certificate or host name verification)" $where $lk) -}}
-{{- end -}}
-{{- if and (has $lk (list "sslmode" "sslrootcert")) (ne $key $lk) -}}
-{{- fail (printf "%s must spell %s in lower case (PgJDBC ignores it otherwise and falls back to sslmode=prefer)" $where $key) -}}
-{{- end -}}
-{{- if eq $key "sslmode" -}}{{- $modes = append $modes $val -}}{{- end -}}
-{{- if eq $key "sslrootcert" -}}{{- $roots = append $roots $val -}}{{- end -}}
+
+{{- /* This repo's name rules on top of fbx.datasourceOverrideName; prints the reason (non-empty means refused). */ -}}
+{{- define "bulk.forbiddenEnvName" -}}
+{{- $n := include "bulk.normalEnvName" . -}}
+{{- if regexMatch "(?i)^spring[._-]?config[._-]?(import|location|additional[._-]?location|name)([._-]?[0-9]+)?[._-]?$" $n -}}
+a config import, location or name can load a file or config tree that sets anything (the datasource, fintechbankx.tls.enforce) where the chart cannot check it; the chart renders no config import
+{{- else if regexMatch "(?i)^spring[._-]?profiles[._-]?(active|include|default|group)([._-]|$)" $n -}}
+a profile can activate an application-<profile> config in the image (local switches the TLS assertion off); the chart renders SPRING_PROFILES_ACTIVE itself from kafkaStrimzi.enabled
+{{- else if regexMatch "(?i)^fintechbankx[._-]?tls" $n -}}
+it would switch the service's startup TLS assertion (fintechbankx.tls.enforce) off; only a local run sets it, never the chart
+{{- else if regexMatch "(?i)^spring[._-]?kafka[._-].*security[._-]?protocol|^spring[._-]?kafka[._-]?properties[._-]|^kafka[._-]?security[._-]?protocol$" $n -}}
+it would change the Kafka client's effective security.protocol; the chart renders KAFKA_SECURITY_PROTOCOL itself from kafkaStrimzi.enabled (SASL_SSL or SSL)
 {{- end -}}
 {{- end -}}
-{{- if gt (len $modes) 1 -}}
-{{- fail (printf "%s must set sslmode exactly once (found %d; PgJDBC takes the last one)" $where (len $modes)) -}}
+
+{{- define "bulk.guardEnv" -}}
+{{- $field := index . 0 -}}
+{{- $env := index . 1 -}}
+{{- range $key, $value := $env -}}
+{{- if or (kindIs "map" $value) (kindIs "slice" $value) -}}
+{{- fail (printf "%s.%s must be a scalar: a dotted name given to --set becomes a nested map; quote it in a values file (templates/_helpers.tpl, bulk.guardEnv)" $field $key) -}}
 {{- end -}}
-{{- if or (eq (len $modes) 0) (ne (index (append $modes "") 0) "verify-full") -}}
-{{- fail (printf "%s must use sslmode=verify-full (with sslrootcert=%s)" $where $want) -}}
+{{- with include "bulk.forbiddenEnvName" $key -}}
+{{- fail (printf "%s.%s is not allowed: %s (templates/_helpers.tpl, bulk.guardEnv)" $field $key .) -}}
 {{- end -}}
-{{- if or (ne (len $roots) 1) (ne (index (append $roots "") 0) $want) -}}
-{{- fail (printf "%s must set sslrootcert=%s exactly once (the mounted ConfigMap %s)" $where $want (toString $ca.configMapName)) -}}
+{{- if include "fbx.isJvmOptionsName" (include "bulk.normalEnvName" $key) -}}
+{{- if regexMatch "(?i)fintechbankx|kafka" (toString $value) -}}
+{{- fail (printf "%s.%s must not mention fintechbankx or kafka (a -D system property would switch the TLS assertion off or change the Kafka protocol past the chart's checks) (templates/_helpers.tpl, bulk.guardEnv)" $field $key) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

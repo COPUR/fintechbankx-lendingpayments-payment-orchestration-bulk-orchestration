@@ -44,12 +44,21 @@ podDisruptionBudget:
   minAvailable: 2
 
 # Non-secret runtime settings, rendered into a ConfigMap. Values marked
-# "required" fail the render when empty. Keys that would redirect Spring's
-# configuration (SPRING_CONFIG_IMPORT, SPRING_CONFIG_LOCATION,
-# SPRING_CONFIG_ADDITIONAL_LOCATION), bypass DB_URL (SPRING_DATASOURCE_URL,
-# SPRING_FLYWAY_URL) or switch off the startup TLS assertion
-# (FINTECHBANKX_TLS_ENFORCE) fail the render, whatever their case
-# (templates/_helpers.tpl, bulk.guardEnv).
+# "required" fail the render when empty. Names are read the way Spring's relaxed
+# binding reads them (any case, '.' and '-' as '_', indexed _0 forms included)
+# and these fail the render (templates/_helpers.tpl, bulk.guardEnv):
+# spring.datasource.* / spring.flyway.* / spring.liquibase.* / spring.r2dbc.*
+# (except SPRING_DATASOURCE_USERNAME and SPRING_DATASOURCE_PASSWORD),
+# spring.application.json, anything containing jdbc_url, sslfactory or
+# sslhostnameverifier, spring.config.(import|location|additional-location|name),
+# spring.profiles.(active|include|default|group), fintechbankx.tls.*,
+# spring.kafka.*security.protocol, spring.kafka.properties.* and
+# KAFKA_SECURITY_PROTOCOL. The chart renders SPRING_PROFILES_ACTIVE and
+# KAFKA_SECURITY_PROTOCOL itself from kafkaStrimzi.enabled (templates/deployment.yaml).
+# JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS and _JAVA_OPTIONS may be set, but their
+# value may not mention datasource, flyway, liquibase, r2dbc, jdbc, ssl,
+# application.json, spring.config, spring.profiles, fintechbankx or kafka, nor
+# read options from a file.
 config:
   # required (deploy/terraform output jdbc_url). Must verify the server
   # certificate against the mounted RDS CA bundle (rdsCaBundle below), e.g.
@@ -64,9 +73,10 @@ config:
   # db-app secret. The schema owner is used only by the migration Job.
   DB_USERNAME: payment_bulk_app
   DB_POOL_MAX: "10"
-  KAFKA_BOOTSTRAP_SERVERS: ""     # required: MSK bootstrap_brokers_sasl_iam (port 9098)
-  KAFKA_SECURITY_PROTOCOL: SASL_SSL
-  SPRING_PROFILES_ACTIVE: kafka-msk   # kafka-strimzi for the in-cluster Kafka (set kafkaStrimzi.enabled)
+  # required: MSK bootstrap_brokers_sasl_iam (port 9098), or the Strimzi bootstrap (9093) with kafkaStrimzi.enabled.
+  # The Kafka profile (kafka-msk or kafka-strimzi) and KAFKA_SECURITY_PROTOCOL (SASL_SSL or SSL) are not
+  # values: the Deployment renders them from kafkaStrimzi.enabled.
+  KAFKA_BOOTSTRAP_SERVERS: ""
   OIDC_ISSUER_URI: ""             # required: https://<identity-host>/realms/fintechbankx
   OIDC_JWK_SET_URI: ""            # required: <issuer>/protocol/openid-connect/certs
   OIDC_TOKEN_URI: ""              # required: client-credentials token endpoint for service-to-service calls
@@ -132,6 +142,9 @@ externalSecret:
 
 # In-cluster Strimzi Kafka instead of MSK: mutual TLS with the KafkaUser
 # certificate from Secret kafka-client-tls (keys user.crt, user.key, ca.crt).
+# This boolean is the only profile switch: false renders SPRING_PROFILES_ACTIVE=kafka-msk
+# and KAFKA_SECURITY_PROTOCOL=SASL_SSL, true renders kafka-strimzi and SSL (both
+# profiles are packaged in the image; neither switches the TLS assertion off).
 kafkaStrimzi:
   enabled: false
   tlsSecretName: kafka-client-tls

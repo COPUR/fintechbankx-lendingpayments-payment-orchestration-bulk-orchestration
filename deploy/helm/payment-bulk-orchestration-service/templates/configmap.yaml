@@ -4,16 +4,13 @@
 {{- fail (printf "config.%s is required" $key) }}
 {{- end }}
 {{- end }}
-{{- /* Spring config redirection, datasource/Flyway URL keys and the TLS switch never come from values. */ -}}
-{{- include "bulk.guardEnv" (list "config" .Values.config) -}}
-{{- /* Aurora: DB_URL is a PostgreSQL JDBC URL, parsed (not searched) for sslmode=verify-full and the mounted RDS CA bundle. */ -}}
+{{- /* Aurora: DB_URL is a PostgreSQL JDBC URL; the vendored platform guard parses it (not a substring search) and every other
+     config value that is one, and no value may redirect Spring's configuration, name a profile, override the datasource,
+     the Kafka protocol or the startup TLS assertion (templates/_fbx-guard.tpl, templates/_helpers.tpl bulk.guardValues). */ -}}
 {{- if not (regexMatch "(?i)^jdbc:(?:[a-z0-9-]+:)*postgresql:" (trim (toString .Values.config.DB_URL))) }}
 {{- fail "config.DB_URL must be a PostgreSQL JDBC URL (jdbc:postgresql://...)" }}
 {{- end }}
-{{- /* Every config value that is a PostgreSQL JDBC URL is held to the same rule (templates/_helpers.tpl, bulk.validateJdbcUrl). */ -}}
-{{- range $key, $value := .Values.config }}
-{{- include "bulk.validateJdbcUrl" (dict "root" $ "where" (printf "config.%s" $key) "url" $value) }}
-{{- end }}
+{{- include "bulk.guardValues" $ -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
