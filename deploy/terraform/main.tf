@@ -262,8 +262,10 @@ locals {
   msk_topic_arn_prefix = var.msk_cluster_arn == "" ? "" : replace(var.msk_cluster_arn, ":cluster/", ":topic/")
 }
 
-# Producer only, on evt.pay.bulk.* (api/asyncapi/svc-pay-bulk-orchestration.yaml):
-# no consumer group (no :group/ grants) and no Kafka transactions (no
+# Producer only, on the aggregate topic evt.pay.bulk.v1 (one topic per aggregate,
+# ADR-019; api/asyncapi/svc-pay-bulk-orchestration.yaml). No DLQ: dead-letter
+# topics belong to consumers (ADR-019/024). No consumer group
+# (no :group/ grants) and no Kafka transactions (no
 # transactional.id, so no :transactional-id/ grants). The idempotent producer
 # (enable.idempotence=true) needs WriteDataIdempotently, which MSK authorises on
 # the cluster ARN, not on topics.
@@ -283,7 +285,7 @@ data "aws_iam_policy_document" "msk" {
   statement {
     sid       = "ProduceOwnTopics"
     actions   = ["kafka-cluster:DescribeTopic", "kafka-cluster:WriteData"]
-    resources = ["${local.msk_topic_arn_prefix}/evt.pay.bulk.*"]
+    resources = ["${local.msk_topic_arn_prefix}/evt.pay.bulk.v1"]
   }
 }
 

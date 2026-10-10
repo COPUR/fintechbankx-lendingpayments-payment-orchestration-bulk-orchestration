@@ -87,7 +87,7 @@ This repository participates in the FinTechBankX cell-based resilience program.
 | review_cadence | quarterly |
 | data_owner | Recurring and Bulk Payments Squad (schema `sc_pay_bulk_orchestration`) |
 | upstream_dependencies | svc-of-consent-authorization (consent reads: `GET /api/v1/consents/{id}`, client credentials, `usable` decides), Keycloak realm `fintechbankx`, Kafka (MSK or Strimzi) |
-| published_events | `evt.pay.bulk.accepted.v1` (`Payments.BulkFile.Accepted.v1`), `evt.pay.bulk.completed.v1` (`Payments.BulkFile.Completed.v1`, contract only: not emitted until items are handed to initiation-settlement), `evt.pay.bulk.rejected.v1` (`Payments.BulkFile.Rejected.v1`) |
+| published_events | `evt.pay.bulk.v1`, one topic per aggregate (ADR-019), keyed by the file id, event named by the `eventType` record header: `Payments.BulkFile.Accepted.v1`, `Payments.BulkFile.Rejected.v1`, `Payments.BulkFile.Completed.v1` (contract only: not emitted until items are handed to initiation-settlement) |
 | consumed_events | none (producer only; no dead-letter topic of its own) |
 
 Runtime names: service id `svc-pay-bulk-orchestration`, `spring.application.name` `app.pay.bulk-orchestration`,

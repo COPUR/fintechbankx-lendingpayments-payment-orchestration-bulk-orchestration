@@ -218,7 +218,7 @@ components:
         A Stopped file (its consent stopped being usable during processing) releases nothing: its report
         shows every item with Status Rejected (items accepted at validation with ErrorMessage "Consent not
         usable", items rejected at validation with their own reason), AcceptedCount 0 and RejectedCount equal
-        to TotalCount, matching its evt.pay.bulk.rejected.v1 event (reason CONSENT_NOT_USABLE).
+        to TotalCount, matching its Payments.BulkFile.Rejected.v1 event on evt.pay.bulk.v1 (reason CONSENT_NOT_USABLE).
       properties:
         Data:
           type: object
