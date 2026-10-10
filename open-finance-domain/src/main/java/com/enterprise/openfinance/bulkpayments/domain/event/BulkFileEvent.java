@@ -5,7 +5,7 @@ import java.util.UUID;
 
 /**
  * Facts raised by the {@code BulkFile} aggregate. Infrastructure turns them into
- * the public envelope of the {@code evt.pay.bulk.*.v1} topics.
+ * the public envelope on the aggregate topic {@code evt.pay.bulk.v1}.
  */
 public sealed interface BulkFileEvent permits BulkFileAccepted, BulkFileRejected {
 

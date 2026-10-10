@@ -12,8 +12,9 @@ import java.util.Map;
 
 /**
  * Turns BulkFile domain events into the public envelope of
- * api/asyncapi/svc-pay-bulk-orchestration.yaml: topic
- * evt.pay.bulk.&lt;event&gt;.v1, eventType Payments.BulkFile.&lt;Event&gt;.v1,
+ * api/asyncapi/svc-pay-bulk-orchestration.yaml: eventType
+ * Payments.BulkFile.&lt;Event&gt;.v1 (OutboxRelay sends every one to the
+ * aggregate topic evt.pay.bulk.v1),
  * amounts as decimal strings at the currency's minor units plus the ISO 4217
  * currency code, ids and counts only (no payee IBANs).
  */
@@ -43,12 +44,12 @@ public class BulkFileEventEnvelopeFactory {
         envelope.put("data", mapped.data());
 
         return new OutboxEventJpaEntity(event.eventId(), AGGREGATE_TYPE, event.fileId(), event.aggregateVersion(),
-                mapped.eventType(), mapped.topic(), toJson(envelope), correlationId, event.occurredAt());
+                mapped.eventType(), toJson(envelope), correlationId, event.occurredAt());
     }
 
     static PublicEvent map(BulkFileEvent event) {
         return switch (event) {
-            case BulkFileAccepted e -> new PublicEvent("accepted", "Accepted", data(
+            case BulkFileAccepted e -> new PublicEvent("Accepted", data(
                     "fileId", e.fileId(),
                     "consentId", e.consentId(),
                     "tppId", e.tppId(),
@@ -58,7 +59,7 @@ public class BulkFileEventEnvelopeFactory {
                     "rejectedCount", e.rejectedCount(),
                     "totalAmount", amount(e.totalAmount()),
                     "currency", e.totalAmount().currency().getCurrencyCode()));
-            case BulkFileRejected e -> new PublicEvent("rejected", "Rejected", data(
+            case BulkFileRejected e -> new PublicEvent("Rejected", data(
                     "fileId", e.fileId(),
                     "totalCount", e.totalCount(),
                     "rejectedCount", e.rejectedCount(),
@@ -88,11 +89,7 @@ public class BulkFileEventEnvelopeFactory {
         }
     }
 
-    record PublicEvent(String topicSuffix, String eventName, Map<String, Object> data) {
-        String topic() {
-            return "evt.pay.bulk." + topicSuffix + ".v1";
-        }
-
+    record PublicEvent(String eventName, Map<String, Object> data) {
         String eventType() {
             return "Payments.BulkFile." + eventName + ".v1";
         }

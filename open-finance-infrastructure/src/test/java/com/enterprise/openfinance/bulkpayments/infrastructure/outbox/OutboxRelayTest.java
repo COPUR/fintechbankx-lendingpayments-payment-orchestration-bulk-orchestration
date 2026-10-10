@@ -49,8 +49,8 @@ class OutboxRelayTest {
 
     @Test
     void publishesPendingRowsInOrderWithHeadersAndMarksThem() {
-        OutboxEventJpaEntity first = row("FILE-1", "evt.pay.bulk.accepted.v1");
-        OutboxEventJpaEntity second = row("FILE-1", "evt.pay.bulk.rejected.v1");
+        OutboxEventJpaEntity first = row("FILE-1", "Payments.BulkFile.Accepted.v1");
+        OutboxEventJpaEntity second = row("FILE-1", "Payments.BulkFile.Rejected.v1");
         first.setTraceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
         when(outbox.findPendingBatch(100)).thenReturn(List.of(first, second));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
@@ -61,7 +61,7 @@ class OutboxRelayTest {
         assertThat(first.getPublishedAt()).isEqualTo(NOW);
         assertThat(second.getStatus()).isEqualTo(OutboxEventJpaEntity.PUBLISHED);
         verify(kafka).send(argThat((ProducerRecord<String, String> record) ->
-                record.topic().equals("evt.pay.bulk.accepted.v1")
+                record.topic().equals("evt.pay.bulk.v1")
                         && record.key().equals("FILE-1")
                         && new String(record.headers().lastHeader("eventType").value(), StandardCharsets.UTF_8)
                         .equals("Payments.BulkFile.Accepted.v1")
@@ -69,15 +69,53 @@ class OutboxRelayTest {
                         .equals("ix-1")
                         && record.headers().lastHeader("traceparent") != null));
         verify(kafka).send(argThat((ProducerRecord<String, String> record) ->
-                record.topic().equals("evt.pay.bulk.rejected.v1")
+                new String(record.headers().lastHeader("eventType").value(), StandardCharsets.UTF_8)
+                        .equals("Payments.BulkFile.Rejected.v1")
                         && record.headers().lastHeader("traceparent") == null));
+    }
+
+    /** ADR-019 (owner decision 2026-10-08): one topic per aggregate, key = aggregateId, eventType/eventId/correlationId headers. */
+    @Test
+    void publishesEveryBulkFileEventToTheAggregateTopicWithKeyAndHeaders() throws Exception {
+        BulkFileEventEnvelopeFactory envelopes = new BulkFileEventEnvelopeFactory(new com.fasterxml.jackson.databind.ObjectMapper());
+        List<OutboxEventJpaEntity> rows = List.of(
+                envelopes.toOutboxRow(new com.enterprise.openfinance.bulkpayments.domain.event.BulkFileAccepted(
+                        UUID.randomUUID(), "FILE-1", 0L, NOW, "CONS-1", "TPP-001",
+                        com.enterprise.openfinance.bulkpayments.domain.model.BulkIntegrityMode.PARTIAL_REJECTION, 2, 1, 1,
+                        com.enterprise.openfinance.bulkpayments.domain.model.Money.of("10", "AED")), "ix-agg"),
+                envelopes.toOutboxRow(new com.enterprise.openfinance.bulkpayments.domain.event.BulkFileRejected(
+                        UUID.randomUUID(), "FILE-1", 1L, NOW, 2, 2,
+                        com.enterprise.openfinance.bulkpayments.domain.event.BulkFileRejected.Reason.ALL_ITEMS_REJECTED),
+                        "ix-agg"));
+        when(outbox.findPendingBatch(100)).thenReturn(rows);
+        when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
+
+        assertThat(relay(CLOCK).relayOnce()).isEqualTo(2);
+
+        org.mockito.ArgumentCaptor<ProducerRecord<String, String>> sent = org.mockito.ArgumentCaptor.forClass(ProducerRecord.class);
+        verify(kafka, times(2)).send(sent.capture());
+        com.fasterxml.jackson.databind.ObjectMapper json = new com.fasterxml.jackson.databind.ObjectMapper();
+        for (ProducerRecord<String, String> record : sent.getAllValues()) {
+            com.fasterxml.jackson.databind.JsonNode envelope = json.readTree(record.value());
+            assertThat(record.topic()).as("one topic per aggregate (ADR-019)").isEqualTo("evt.pay.bulk.v1");
+            assertThat(record.key()).isEqualTo("FILE-1").isEqualTo(envelope.get("aggregateId").asText());
+            assertThat(header(record, "eventType")).isEqualTo(envelope.get("eventType").asText());
+            assertThat(header(record, "eventId")).isEqualTo(envelope.get("eventId").asText());
+            assertThat(header(record, "correlationId")).isEqualTo(envelope.get("correlationId").asText()).isEqualTo("ix-agg");
+        }
+        assertThat(sent.getAllValues()).extracting(r -> header(r, "eventType"))
+                .containsExactly("Payments.BulkFile.Accepted.v1", "Payments.BulkFile.Rejected.v1");
+    }
+
+    private static String header(ProducerRecord<String, String> record, String name) {
+        return new String(record.headers().lastHeader(name).value(), StandardCharsets.UTF_8);
     }
 
     /** Review 5459741793 minor 2: no database transaction stays open while a send blocks on Kafka. */
     @Test
     void noTransactionIsOpenWhileASendBlocksAndOutcomesAreRecordedInShortTransactions() {
-        OutboxEventJpaEntity first = row("FILE-1", "evt.pay.bulk.accepted.v1");
-        OutboxEventJpaEntity poison = row("FILE-2", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity first = row("FILE-1", "Payments.BulkFile.Accepted.v1");
+        OutboxEventJpaEntity poison = row("FILE-2", "Payments.BulkFile.Accepted.v1");
         RecordingTransactions transactions = new RecordingTransactions();
         FakeLock lock = new FakeLock();
         List<Boolean> heldAtSend = new java.util.ArrayList<>();
@@ -113,7 +151,7 @@ class OutboxRelayTest {
 
     @Test
     void theLockIsReleasedWhenRecordingAnOutcomeFails() {
-        OutboxEventJpaEntity row = row("FILE-1", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity row = row("FILE-1", "Payments.BulkFile.Accepted.v1");
         FakeLock lock = new FakeLock();
         when(outbox.findPendingBatch(100)).thenReturn(List.of(row));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.completedFuture(mock(SendResult.class)));
@@ -165,8 +203,8 @@ class OutboxRelayTest {
     void retriableErrorsStopTheBatchWithoutMarkingAnyRowAndNeverParkHoweverLongTheyLast() {
         MutableClock clock = new MutableClock(NOW);
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        OutboxEventJpaEntity failing = row("FILE-1", "evt.pay.bulk.accepted.v1");
-        OutboxEventJpaEntity later = row("FILE-2", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity failing = row("FILE-1", "Payments.BulkFile.Accepted.v1");
+        OutboxEventJpaEntity later = row("FILE-2", "Payments.BulkFile.Accepted.v1");
         when(outbox.findPendingBatch(100)).thenReturn(List.of(failing, later));
         when(kafka.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.failedFuture(new TimeoutException("Expiring 1 record(s)")))
@@ -194,7 +232,7 @@ class OutboxRelayTest {
 
     @Test
     void theRelaysOwnSendTimeoutIsNotAPayloadError() {
-        OutboxEventJpaEntity row = row("FILE-1", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity row = row("FILE-1", "Payments.BulkFile.Accepted.v1");
         when(outbox.findPendingBatch(100)).thenReturn(List.of(row));
         when(kafka.send(any(ProducerRecord.class))).thenReturn(new CompletableFuture<>());
 
@@ -212,8 +250,8 @@ class OutboxRelayTest {
                 new SerializationException("cannot serialise"),
                 new InvalidTopicException("bad topic"));
         for (RuntimeException failure : payload) {
-            OutboxEventJpaEntity poison = row("FILE-1", "evt.pay.bulk.accepted.v1");
-            OutboxEventJpaEntity other = row("FILE-2", "evt.pay.bulk.accepted.v1");
+            OutboxEventJpaEntity poison = row("FILE-1", "Payments.BulkFile.Accepted.v1");
+            OutboxEventJpaEntity other = row("FILE-2", "Payments.BulkFile.Accepted.v1");
             SpringDataOutboxRepository repo = mock(SpringDataOutboxRepository.class);
             KafkaTemplate<String, String> template = mock(KafkaTemplate.class);
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
@@ -243,7 +281,7 @@ class OutboxRelayTest {
 
     @Test
     void anOperatorParkIsCountedOnceByTheRelay() {
-        OutboxEventJpaEntity operatorParked = row("FILE-1", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity operatorParked = row("FILE-1", "Payments.BulkFile.Accepted.v1");
         // What the runbook's operator SQL leaves behind: parked with a reason, not yet counted.
         org.springframework.test.util.ReflectionTestUtils.setField(operatorParked, "status", OutboxEventJpaEntity.PARKED);
         org.springframework.test.util.ReflectionTestUtils.setField(operatorParked, "parkedAt", NOW);
@@ -277,9 +315,9 @@ class OutboxRelayTest {
 
     @Test
     void aParkedRowKeepsTheRestOfItsAggregateBlocked() {
-        OutboxEventJpaEntity poison = row("FILE-1", "evt.pay.bulk.accepted.v1");
-        OutboxEventJpaEntity sameFile = row("FILE-1", "evt.pay.bulk.rejected.v1");
-        OutboxEventJpaEntity otherFile = row("FILE-2", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity poison = row("FILE-1", "Payments.BulkFile.Accepted.v1");
+        OutboxEventJpaEntity sameFile = row("FILE-1", "Payments.BulkFile.Rejected.v1");
+        OutboxEventJpaEntity otherFile = row("FILE-2", "Payments.BulkFile.Accepted.v1");
         when(outbox.findPendingBatch(100)).thenReturn(List.of(poison, sameFile, otherFile));
         when(kafka.send(any(ProducerRecord.class)))
                 .thenReturn(CompletableFuture.failedFuture(new RecordTooLargeException("too large")))
@@ -323,8 +361,8 @@ class OutboxRelayTest {
     private void assertStopsWithoutMarking(RuntimeException failure) {
         MutableClock clock = new MutableClock(NOW);
         SimpleMeterRegistry registry = new SimpleMeterRegistry();
-        OutboxEventJpaEntity first = row("FILE-1", "evt.pay.bulk.accepted.v1");
-        OutboxEventJpaEntity later = row("FILE-2", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity first = row("FILE-1", "Payments.BulkFile.Accepted.v1");
+        OutboxEventJpaEntity later = row("FILE-2", "Payments.BulkFile.Accepted.v1");
         SpringDataOutboxRepository repo = mock(SpringDataOutboxRepository.class);
         KafkaTemplate<String, String> template = mock(KafkaTemplate.class);
         when(repo.findPendingBatch(100)).thenReturn(List.of(first, later));
@@ -357,7 +395,7 @@ class OutboxRelayTest {
     @Test
     void backoffDoublesUpToItsCeilingAndResetsAfterASuccess() {
         MutableClock clock = new MutableClock(NOW);
-        OutboxEventJpaEntity row = row("FILE-1", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity row = row("FILE-1", "Payments.BulkFile.Accepted.v1");
         when(outbox.findPendingBatch(100)).thenReturn(List.of(row));
         when(kafka.send(any(ProducerRecord.class))).thenThrow(new IllegalStateException("x"));
         OutboxRelay relay = relay(clock, new SimpleMeterRegistry());
@@ -400,7 +438,7 @@ class OutboxRelayTest {
 
     @Test
     void interruptedSendStopsTheBatch() {
-        OutboxEventJpaEntity row = row("FILE-1", "evt.pay.bulk.accepted.v1");
+        OutboxEventJpaEntity row = row("FILE-1", "Payments.BulkFile.Accepted.v1");
         when(outbox.findPendingBatch(100)).thenReturn(List.of(row));
         CompletableFuture<SendResult<String, String>> future = new CompletableFuture<>();
         when(kafka.send(any(ProducerRecord.class))).thenReturn(future);
@@ -472,8 +510,7 @@ class OutboxRelayTest {
         }
     }
 
-    private static OutboxEventJpaEntity row(String fileId, String topic) {
-        return new OutboxEventJpaEntity(UUID.randomUUID(), "BulkFile", fileId, 0L, "Payments.BulkFile.Accepted.v1",
-                topic, "{}", "ix-1", NOW);
+    private static OutboxEventJpaEntity row(String fileId, String eventType) {
+        return new OutboxEventJpaEntity(UUID.randomUUID(), "BulkFile", fileId, 0L, eventType, "{}", "ix-1", NOW);
     }
 }
