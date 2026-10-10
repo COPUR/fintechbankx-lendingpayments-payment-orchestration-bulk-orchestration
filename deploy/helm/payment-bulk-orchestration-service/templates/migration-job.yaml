@@ -68,6 +68,12 @@ spec:
         sidecar.istio.io/inject: {{ .Values.migration.istioSidecar | quote }}
     spec:
       restartPolicy: Never
+      # No serviceAccountName on purpose: the Job runs as the namespace's default
+      # service account, with no API token mounted. On a first install Helm runs
+      # pre-install hooks before it creates the chart's ServiceAccount, so naming
+      # that account would block the hook until it times out. The mesh's Aurora
+      # egress for this pod keys on the app.kubernetes.io/name label only
+      # (cicd-templates 335a345), not on the service account.
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
