@@ -268,6 +268,58 @@ jobs:
             echo "chart rendered without required config"; exit 1
           fi
 
+      - name: Migration credential stays in the migration ExternalSecret
+        # SPRING_FLYWAY_USER and SPRING_FLYWAY_PASSWORD are chart literals (the schema-owner credential, Job only);
+        # fbx.guard refuses every spring.flyway.* name, so it cannot check them. Pin them here.
+        run: |
+          chart=deploy/helm/payment-bulk-orchestration-service
+          args="--set image.repository=ci/payment-bulk-orchestration-service --set image.tag=${{ github.sha }}"
+          args="$args --set externalSecret.remoteSecretName=dev/payment-bulk-orchestration-service/db-app"
+          args="$args --set externalSecret.serviceClientSecretName=dev/payment-bulk-orchestration-service/oidc-client"
+          args="$args --set migration.remoteSecretName=dev/payment-bulk-orchestration-service/db-migration"
+          args="$args --set-string config.DB_URL=jdbc:postgresql://ci-db:5432/db_pay_bulk_orchestration_ci?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem"
+          args="$args --set config.KAFKA_BOOTSTRAP_SERVERS=ci-kafka:9098"
+          args="$args --set config.OIDC_ISSUER_URI=https://ci-idp/realms/fintechbankx"
+          args="$args --set config.OIDC_JWK_SET_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/certs"
+          args="$args --set config.OIDC_TOKEN_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/token"
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
+          rendered_file="$(mktemp)"
+          helm template ci "$chart" --namespace payments $args > "$rendered_file"
+          python3 - "$rendered_file" <<'PY'
+          import json, sys, yaml
+          migration_key = "dev/payment-bulk-orchestration-service/db-migration"
+          wanted = {"SPRING_FLYWAY_USER", "SPRING_FLYWAY_PASSWORD"}
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+          ess = [d for d in docs if d["kind"] == "ExternalSecret"]
+          mig = [d for d in ess if d["metadata"]["labels"].get("app.kubernetes.io/component") == "db-migration"]
+          api = [d for d in ess if d["metadata"]["labels"].get("app.kubernetes.io/component") == "service"]
+          assert len(mig) == 1 and len(api) == 1 and len(ess) == 2, "expected one migration and one API ExternalSecret"
+          data = mig[0]["spec"]["data"]
+          keys = [e["secretKey"] for e in data]
+          assert len(keys) == len(set(keys)) and set(keys) == wanted, f"migration ExternalSecret secretKeys {keys}, want exactly {sorted(wanted)}"
+          for e in data:
+              assert e["remoteRef"]["key"] == migration_key, f"{e["secretKey"]} reads {e["remoteRef"]["key"]}, want {migration_key}"
+          api_keys = {e["secretKey"] for e in api[0]["spec"]["data"]}
+          assert not api_keys & wanted, f"API ExternalSecret carries {sorted(api_keys & wanted)}"
+          mig_secret = mig[0]["spec"]["target"]["name"]
+          deployments = [d for d in docs if d["kind"] == "Deployment"]
+          assert deployments, "no Deployment rendered"
+          for d in deployments:
+              spec = d["spec"]["template"]["spec"]
+              for c in spec.get("containers", []) + spec.get("initContainers", []):
+                  for ref in c.get("envFrom", []):
+                      for k in ("secretRef", "configMapRef"):
+                          assert ref.get(k, {}).get("name") != mig_secret, f"Deployment envFrom references {mig_secret}"
+                  for ev in c.get("env", []):
+                      assert ev["name"] not in wanted, f"Deployment env sets {ev["name"]}"
+                      sk = ev.get("valueFrom", {}).get("secretKeyRef", {})
+                      assert sk.get("name") != mig_secret and sk.get("key") not in wanted, f"Deployment env {ev["name"]} reads the migration secret"
+              blob = json.dumps(spec)
+              for needle in [mig_secret, migration_key, *wanted]:
+                  assert needle not in blob, f"Deployment pod spec mentions {needle}"
+          print("migration credential pinned: Job-only, keys", sorted(wanted))
+          PY
+
       - name: DB connection alarm budget matches the chart
         # deploy/terraform sizes the Aurora connection alarm from (service_max_replicas + service_max_surge) x
         # db_pool_max + headroom; those must be the chart's HPA maxReplicas, Deployment maxSurge and DB_POOL_MAX
