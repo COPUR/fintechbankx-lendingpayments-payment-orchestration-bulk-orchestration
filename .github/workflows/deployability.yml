@@ -136,8 +136,9 @@ jobs:
           fi
 
       - name: DB connection alarm budget matches the chart
-        # deploy/terraform sizes the Aurora connection alarm from service_max_replicas x db_pool_max + headroom;
-        # those must be the chart's HPA maxReplicas and DB_POOL_MAX per environment (defaults = prod shape).
+        # deploy/terraform sizes the Aurora connection alarm from (service_max_replicas + service_max_surge) x
+        # db_pool_max + headroom; those must be the chart's HPA maxReplicas, Deployment maxSurge and DB_POOL_MAX
+        # per environment (defaults = prod shape).
         run: |
           chart=deploy/helm/payment-bulk-orchestration-service
           tf=deploy/terraform

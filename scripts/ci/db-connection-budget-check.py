@@ -2,9 +2,10 @@
 """The Aurora connection alarm budget and the chart must describe the same fleet.
 
 deploy/terraform sizes the DatabaseConnections alarm as
-    service_max_replicas x db_pool_max + db_connection_headroom
+    (service_max_replicas + service_max_surge) x db_pool_max + db_connection_headroom
 from Terraform variables, while the pods' real figures live in the Helm chart
-(HPA maxReplicas, config.DB_POOL_MAX). Nothing links the two, so this check
+(HPA maxReplicas, the Deployment's rollingUpdate.maxSurge, config.DB_POOL_MAX).
+Nothing links the two, so this check
 reads the rendered chart (stdin) and the Terraform variables (defaults in
 variables.tf, overridden by an optional tfvars file) and fails when they
 disagree, or when main.tf no longer derives the alarm threshold from them.
@@ -17,8 +18,8 @@ from pathlib import Path
 
 import yaml
 
-VARIABLES = ("service_max_replicas", "db_pool_max", "db_connection_headroom")
-BUDGET = "var.service_max_replicas * var.db_pool_max + var.db_connection_headroom"
+VARIABLES = ("service_max_replicas", "service_max_surge", "db_pool_max", "db_connection_headroom")
+BUDGET = "(var.service_max_replicas + var.service_max_surge) * var.db_pool_max + var.db_connection_headroom"
 
 
 def fail(message):
@@ -71,10 +72,22 @@ def chart_values(docs):
         max_replicas = int(hpas[0]["spec"]["maxReplicas"])
     else:
         max_replicas = int(deployments[0]["spec"].get("replicas", 1))
+    max_surge = surge(deployments[0], max_replicas)
     pools = [cm["data"]["DB_POOL_MAX"] for cm in by_kind.get("ConfigMap", []) if "DB_POOL_MAX" in cm.get("data", {})]
     if len(pools) != 1:
         fail(f"expected DB_POOL_MAX in one ConfigMap, found {len(pools)}")
-    return max_replicas, int(pools[0])
+    return max_replicas, max_surge, int(pools[0])
+
+
+def surge(deployment, replicas):
+    """Extra pods a rolling update may add at peak; a percentage rounds up, as Kubernetes does."""
+    strategy = deployment["spec"].get("strategy", {})
+    if strategy.get("type", "RollingUpdate") != "RollingUpdate":
+        return 0
+    value = strategy.get("rollingUpdate", {}).get("maxSurge", "25%")
+    if isinstance(value, str) and value.endswith("%"):
+        return -(-replicas * int(value[:-1]) // 100)
+    return int(value)
 
 
 def main():
@@ -84,20 +97,23 @@ def main():
     tfvars = sys.argv[2] if len(sys.argv) == 3 else None
     check_main_tf(tf_dir)
     tf = terraform_values(tf_dir, tfvars)
-    max_replicas, pool = chart_values([d for d in yaml.safe_load_all(sys.stdin) if d])
+    max_replicas, max_surge, pool = chart_values([d for d in yaml.safe_load_all(sys.stdin) if d])
 
     source = tfvars or f"{tf_dir}/variables.tf defaults"
     errors = []
     if tf["service_max_replicas"] != max_replicas:
         errors.append(f"service_max_replicas is {tf['service_max_replicas']} ({source}) "
                       f"but the chart's HPA maxReplicas is {max_replicas}")
+    if tf["service_max_surge"] != max_surge:
+        errors.append(f"service_max_surge is {tf['service_max_surge']} ({source}) "
+                      f"but the chart's Deployment maxSurge is {max_surge}")
     if tf["db_pool_max"] != pool:
         errors.append(f"db_pool_max is {tf['db_pool_max']} ({source}) but the chart's DB_POOL_MAX is {pool}")
     if errors:
         fail("; ".join(errors))
-    budget = max_replicas * pool + tf["db_connection_headroom"]
-    print(f"db-connection-budget-check: {source}: alarm above {max_replicas} replicas x {pool} connections"
-          f" + {tf['db_connection_headroom']} headroom = {budget}, matching the chart")
+    budget = (max_replicas + max_surge) * pool + tf["db_connection_headroom"]
+    print(f"db-connection-budget-check: {source}: alarm above ({max_replicas} replicas + {max_surge} surge)"
+          f" x {pool} connections + {tf['db_connection_headroom']} headroom = {budget}, matching the chart")
 
 
 if __name__ == "__main__":

@@ -312,21 +312,23 @@ resource "aws_cloudwatch_metric_alarm" "aurora_capacity" {
   ok_actions          = var.alarm_topic_arn == "" ? [] : [var.alarm_topic_arn]
 }
 
-# Connection budget: every replica at full pool (HPA maxReplicas x DB_POOL_MAX)
+# Connection budget: every replica at full pool, including the extra pods of a
+# rolling update at peak ((HPA maxReplicas + Deployment maxSurge) x DB_POOL_MAX),
 # plus headroom for the migration Job and DBA sessions. The alarm fires only
 # above that budget, i.e. on a connection leak or an unexpected client, not
-# under normal peak load. service_max_replicas and db_pool_max must equal the
-# Helm values (autoscaling.maxReplicas, config.DB_POOL_MAX) per environment;
-# CI fails when they differ (scripts/ci/db-connection-budget-check.py, workflow
-# Deployability). Keep the budget below Aurora's max_connections at
-# aurora_min_capacity (Serverless v2 sizes it from capacity).
+# under normal peak load or a rollout. service_max_replicas, service_max_surge
+# and db_pool_max must equal the chart (autoscaling.maxReplicas, the Deployment's
+# rollingUpdate.maxSurge, config.DB_POOL_MAX) per environment; CI fails when they
+# differ (scripts/ci/db-connection-budget-check.py, workflow Deployability).
+# Keep the budget below Aurora's max_connections at aurora_min_capacity
+# (Serverless v2 sizes it from capacity).
 locals {
-  db_connection_budget = var.service_max_replicas * var.db_pool_max + var.db_connection_headroom
+  db_connection_budget = (var.service_max_replicas + var.service_max_surge) * var.db_pool_max + var.db_connection_headroom
 }
 
 resource "aws_cloudwatch_metric_alarm" "aurora_connections" {
   alarm_name          = "${local.name}-aurora-connections-high"
-  alarm_description   = "Connections above the pool budget (${var.service_max_replicas} replicas x ${var.db_pool_max} + ${var.db_connection_headroom}): leak or unexpected client."
+  alarm_description   = "Connections above the pool budget ((${var.service_max_replicas} replicas + ${var.service_max_surge} surge) x ${var.db_pool_max} + ${var.db_connection_headroom}): leak or unexpected client."
   namespace           = "AWS/RDS"
   metric_name         = "DatabaseConnections"
   dimensions          = { DBClusterIdentifier = aws_rds_cluster.database.cluster_identifier }

@@ -135,6 +135,17 @@ variable "service_max_replicas" {
   }
 }
 
+variable "service_max_surge" {
+  type        = number
+  description = "Pods a rolling update adds above maxReplicas (Helm Deployment rollingUpdate.maxSurge); sizes the DB connection alarm."
+  default     = 1
+
+  validation {
+    condition     = var.service_max_surge >= 0
+    error_message = "service_max_surge cannot be negative."
+  }
+}
+
 variable "db_pool_max" {
   type        = number
   description = "Hikari maximum pool size per pod (Helm config.DB_POOL_MAX); sizes the DB connection alarm."
