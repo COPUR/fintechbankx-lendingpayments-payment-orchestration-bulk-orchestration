@@ -101,6 +101,12 @@ Cross-repo prerequisites, in this order (each must be done before the next start
    Then put `{"username","password"}` of each role into its secret (`aws secretsmanager put-secret-value`). The
    first install's pre-install Job runs every migration (V1 to V15) as the owner; V11 grants the runtime role. Rollback: uninstall
    the chart, then `DROP SCHEMA sc_pay_bulk_orchestration CASCADE` and recreate it as above.
+
+   Recovery after corrected migration comments: the SQL comments of `V14` and `V15` were corrected in place
+   (commits `5bf89df` and `21bae65`), which changed their Flyway checksums. No shared environment applied the
+   earlier text (they ran only in CI and local test databases). A database that did apply a commit before
+   `21bae65` runs `flyway repair` before the next `migrate`, otherwise Flyway reports a checksum mismatch and
+   the pre-upgrade Job fails.
 5. **Smoke upload** in the target environment (section 3, step 6).
 6. **Route switch** (section 3, step 8).
 
