@@ -66,6 +66,21 @@ jobs:
               echo "chart rendered DB_URL ...?$bad (needs sslmode=verify-full and the mounted RDS CA bundle)" >&2; exit 1
             fi
           done
+          # Governance round 3, item 1: values never redirect Spring's configuration (SPRING_CONFIG_IMPORT,
+          # SPRING_CONFIG_LOCATION, SPRING_CONFIG_ADDITIONAL_LOCATION), bypass DB_URL (SPRING_DATASOURCE_URL,
+          # SPRING_FLYWAY_URL) or switch off the startup TLS assertion (FINTECHBANKX_TLS_ENFORCE), whatever the
+          # case of the key, and not inside a value either (templates/_helpers.tpl, bulk.guardEnv).
+          for bad in "SPRING_CONFIG_IMPORT=optional:configtree:/etc/fintechbankx/config/" \
+                     "spring_config_location=file:/tmp/application.yml" \
+                     "Spring_Config_Additional_Location=file:/tmp/" \
+                     "SPRING_DATASOURCE_URL=jdbc:postgresql://other:5432/db" \
+                     "SPRING_FLYWAY_URL=jdbc:postgresql://other:5432/db" \
+                     "FINTECHBANKX_TLS_ENFORCE=false" \
+                     "JAVA_TOOL_OPTIONS=-Dspring.config.import=file:/tmp/application.yml"; do
+            if helm template ci "$chart" --namespace payments $args --set-string "config.$bad" > /dev/null 2>&1; then
+              echo "chart rendered config.$bad (Spring config redirection must fail the render)" >&2; exit 1
+            fi
+          done
           # Flyway runs only in the hook Job, as the schema owner; the pods never get that secret.
           job="$(helm template ci "$chart" --namespace payments $args --show-only templates/migration-job.yaml)"
           grep -q 'helm.sh/hook: pre-install,pre-upgrade' <<<"$job"

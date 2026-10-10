@@ -4,6 +4,8 @@
 {{- fail (printf "config.%s is required" $key) }}
 {{- end }}
 {{- end }}
+{{- /* Spring config redirection, datasource/Flyway URL keys and the TLS switch never come from values. */ -}}
+{{- include "bulk.guardEnv" (list "config" .Values.config) -}}
 {{- /* Aurora: verify the server certificate against the mounted RDS CA bundle. */ -}}
 {{- $rootcert := printf "sslrootcert=%s/%s" (trimSuffix "/" .Values.rdsCaBundle.mountPath) .Values.rdsCaBundle.key }}
 {{- if not (and (contains "sslmode=verify-full" .Values.config.DB_URL) (contains $rootcert .Values.config.DB_URL)) }}

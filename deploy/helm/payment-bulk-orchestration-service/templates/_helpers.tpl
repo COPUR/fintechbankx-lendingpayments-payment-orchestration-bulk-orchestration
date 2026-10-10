@@ -73,3 +73,38 @@ ExternalSecret adds its own (service or db-migration).
 {{- define "bulk.migrationName" -}}
 {{ include "bulk.name" . }}-db-migration
 {{- end -}}
+
+{{- /*
+Environment the chart refuses to render (governance round 3, item 1).
+- Spring config redirection: SPRING_CONFIG_IMPORT, SPRING_CONFIG_LOCATION and
+  SPRING_CONFIG_ADDITIONAL_LOCATION would point the service at another
+  configuration source. A configtree is allowed only as a value this chart itself
+  renders, on the fixed mount optional:configtree:/etc/fintechbankx/config/ (this
+  chart renders none today).
+- Datasource and Flyway URL keys (SPRING_DATASOURCE_URL, SPRING_FLYWAY_URL) would
+  bypass the DB_URL verify-full check in configmap.yaml.
+- FINTECHBANKX_TLS_ENFORCE would switch off the service's startup TLS assertion
+  (fintechbankx.tls.enforce, true by default; only local and test configuration
+  set it false, never the chart).
+Keys are compared whatever their case, with "." and "-" read as "_" (Spring's
+relaxed binding); values are searched for the same names, so a
+JAVA_TOOL_OPTIONS=-Dspring.config.import=... does not slip through either.
+Usage: include "bulk.guardEnv" (list "config" .Values.config)
+*/ -}}
+{{- define "bulk.guardEnv" -}}
+{{- $field := index . 0 -}}
+{{- $env := index . 1 -}}
+{{- $forbidden := list "SPRING_CONFIG_IMPORT" "SPRING_CONFIG_LOCATION" "SPRING_CONFIG_ADDITIONAL_LOCATION" "SPRING_DATASOURCE_URL" "SPRING_FLYWAY_URL" "FINTECHBANKX_TLS_ENFORCE" -}}
+{{- range $key, $value := $env -}}
+{{- $normalKey := regexReplaceAll "[.-]" (upper $key) "_" -}}
+{{- $normalValue := regexReplaceAll "[.-]" (upper (toString $value)) "_" -}}
+{{- range $name := $forbidden -}}
+{{- if eq $normalKey $name -}}
+{{- fail (printf "%s.%s is not allowed: the chart renders this Spring setting itself (templates/_helpers.tpl, bulk.guardEnv)" $field $key) -}}
+{{- end -}}
+{{- if contains $name $normalValue -}}
+{{- fail (printf "%s.%s must not carry %s in its value (templates/_helpers.tpl, bulk.guardEnv)" $field $key $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

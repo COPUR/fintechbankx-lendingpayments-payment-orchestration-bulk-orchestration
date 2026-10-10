@@ -44,7 +44,12 @@ podDisruptionBudget:
   minAvailable: 2
 
 # Non-secret runtime settings, rendered into a ConfigMap. Values marked
-# "required" fail the render when empty.
+# "required" fail the render when empty. Keys that would redirect Spring's
+# configuration (SPRING_CONFIG_IMPORT, SPRING_CONFIG_LOCATION,
+# SPRING_CONFIG_ADDITIONAL_LOCATION), bypass DB_URL (SPRING_DATASOURCE_URL,
+# SPRING_FLYWAY_URL) or switch off the startup TLS assertion
+# (FINTECHBANKX_TLS_ENFORCE) fail the render, whatever their case
+# (templates/_helpers.tpl, bulk.guardEnv).
 config:
   # required (deploy/terraform output jdbc_url). Must verify the server
   # certificate against the mounted RDS CA bundle (rdsCaBundle below), e.g.
