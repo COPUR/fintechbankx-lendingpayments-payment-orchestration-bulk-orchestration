@@ -60,12 +60,35 @@ jobs:
           if grep -q "/etc/ssl/rds" <<<"$rendered"; then
             echo "chart still mounts the RDS CA bundle at the old path /etc/ssl/rds" >&2; exit 1
           fi
-          # Negative cases: no verify-full, or a root certificate outside the mounted bundle, must not render.
-          for bad in "sslmode=require" "sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem"; do
+          # Guardrail 4a (round 6): DB_URL is parsed the way PgJDBC parses it (templates/_helpers.tpl,
+          # bulk.validateJdbcUrl), not searched by substring. Each of these must fail the render: no verify-full; a root
+          # certificate outside the mounted bundle; a later sslmode=disable (the driver takes the last one); a decoy
+          # sslrootcert before the real one; sslfactory / sslhostnameverifier / service (bypass verification); an
+          # sslmode hidden in another parameter's value; upper-case SSLMODE (the driver ignores it, so prefer applies);
+          # percent-encoded '=' or a percent-encoded key; and a TLS key before the '?'.
+          ca=sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
+          for bad in "sslmode=require&$ca" \
+                     "sslmode=verify-full&sslrootcert=/etc/ssl/rds/global-bundle.pem" \
+                     "sslmode=verify-full&$ca&sslmode=disable" \
+                     "sslrootcert=/tmp/decoy.pem&sslmode=verify-full&$ca" \
+                     "sslmode=verify-full&$ca&sslfactory=org.postgresql.ssl.NonValidatingFactory" \
+                     "sslmode=verify-full&$ca&sslhostnameverifier=x.Y" \
+                     "sslmode=verify-full&$ca&service=aurora" \
+                     "sslmode=require&applicationName=sslmode=verify-full&$ca" \
+                     "SSLMODE=verify-full&$ca" \
+                     "sslmode%3Dverify-full&$ca&sslmode=verify-full" \
+                     "sslmode=verify-full&$ca&ssl%6Dode=disable"; do
             if helm template ci "$chart" $args --set-string "config.DB_URL=jdbc:postgresql://ci-db:5432/db?$bad" > /dev/null 2>&1; then
-              echo "chart rendered DB_URL ...?$bad (needs sslmode=verify-full and the mounted RDS CA bundle)" >&2; exit 1
+              echo "chart rendered DB_URL ...?$bad (needs exactly one lower-case sslmode=verify-full and the mounted RDS CA bundle)" >&2; exit 1
             fi
           done
+          if helm template ci "$chart" $args --set-string "config.DB_URL=jdbc:postgresql://ci-db:5432/db;sslmode=disable?sslmode=verify-full&$ca" > /dev/null 2>&1; then
+            echo "chart rendered DB_URL with a TLS key before the '?'" >&2; exit 1
+          fi
+          # Any other config value that is a PostgreSQL JDBC URL is held to the same rule.
+          if helm template ci "$chart" $args --set-string "config.OTHER_URL=jdbc:postgresql://other:5432/db?sslmode=disable" > /dev/null 2>&1; then
+            echo "chart rendered a second JDBC URL (config.OTHER_URL) without verify-full" >&2; exit 1
+          fi
           # Governance round 3, item 1: values never redirect Spring's configuration (SPRING_CONFIG_IMPORT,
           # SPRING_CONFIG_LOCATION, SPRING_CONFIG_ADDITIONAL_LOCATION), bypass DB_URL (SPRING_DATASOURCE_URL,
           # SPRING_FLYWAY_URL) or switch off the startup TLS assertion (FINTECHBANKX_TLS_ENFORCE), whatever the

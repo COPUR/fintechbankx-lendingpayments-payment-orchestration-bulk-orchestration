@@ -108,3 +108,73 @@ Usage: include "bulk.guardEnv" (list "config" .Values.config)
 {{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{- /*
+JDBC URL check (governance round 6, guardrail 4a; port of cicd-templates
+fbx.validateJdbcUrl at 2caa48f). Applied to config.DB_URL and to every config
+value that starts with jdbc:[<wrapper>:]postgresql: (case-insensitive). The URL
+is parsed the way PgJDBC parses it, not searched by substring:
+  - split once at the first '?', then split the query on '&'; a key is the text
+    before its first '=' (so applicationName=sslmode=verify-full is not an sslmode);
+  - sslmode appears exactly once, in lower case, with the value verify-full (the
+    driver reads keys case-sensitively: SSLMODE is ignored and the connection
+    falls back to sslmode=prefer; with two sslmode keys the last one wins);
+  - sslrootcert appears exactly once and is the mounted RDS CA bundle
+    (rdsCaBundle.mountPath/rdsCaBundle.key), so no decoy before the real one;
+  - sslfactory, sslfactoryarg, sslhostnameverifier, sslpasswordcallback and
+    service are refused (they bypass certificate or host name verification, or
+    load TLS settings from pg_service.conf);
+  - no percent-encoded '=' (%3D) or '&' (%26) anywhere in the query, every key
+    is plain [A-Za-z0-9_.-]+ (so no percent-encoded key either), and no TLS key
+    before the '?'.
+Usage: include "bulk.validateJdbcUrl" (dict "root" $ "where" "config.DB_URL" "url" $url)
+*/ -}}
+{{- define "bulk.validateJdbcUrl" -}}
+{{- $where := .where -}}
+{{- $url := trim (toString .url) -}}
+{{- if regexMatch "(?i)^jdbc:(?:[a-z0-9-]+:)*postgresql:" $url -}}
+{{- $ca := .root.Values.rdsCaBundle -}}
+{{- $want := printf "%s/%s" (trimSuffix "/" (toString $ca.mountPath)) (toString $ca.key) -}}
+{{- $parts := regexSplit "\\?" $url 2 -}}
+{{- $base := index $parts 0 -}}
+{{- $query := "" -}}
+{{- if eq (len $parts) 2 -}}{{- $query = index $parts 1 -}}{{- end -}}
+{{- if regexMatch "(?i)ssl(mode|rootcert|factory|factoryarg|hostnameverifier|passwordcallback)" $base -}}
+{{- fail (printf "%s must carry TLS parameters only in the query string (after '?')" $where) -}}
+{{- end -}}
+{{- if regexMatch "(?i)%(3d|26)" $query -}}
+{{- fail (printf "%s must not percent-encode '=' or '&' in the query string" $where) -}}
+{{- end -}}
+{{- $modes := list -}}
+{{- $roots := list -}}
+{{- range $param := splitList "&" $query -}}
+{{- if $param -}}
+{{- $kv := regexSplit "=" $param 2 -}}
+{{- $key := index $kv 0 -}}
+{{- $val := "" -}}
+{{- if eq (len $kv) 2 -}}{{- $val = index $kv 1 -}}{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9_.-]+$" $key) -}}
+{{- fail (printf "%s has a query parameter name that is not plain [A-Za-z0-9_.-] (percent-encoding is not allowed): %q" $where $key) -}}
+{{- end -}}
+{{- $lk := lower $key -}}
+{{- if has $lk (list "sslfactory" "sslfactoryarg" "sslhostnameverifier" "sslpasswordcallback" "service") -}}
+{{- fail (printf "%s must not set %s (it can bypass certificate or host name verification)" $where $lk) -}}
+{{- end -}}
+{{- if and (has $lk (list "sslmode" "sslrootcert")) (ne $key $lk) -}}
+{{- fail (printf "%s must spell %s in lower case (PgJDBC ignores it otherwise and falls back to sslmode=prefer)" $where $key) -}}
+{{- end -}}
+{{- if eq $key "sslmode" -}}{{- $modes = append $modes $val -}}{{- end -}}
+{{- if eq $key "sslrootcert" -}}{{- $roots = append $roots $val -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if gt (len $modes) 1 -}}
+{{- fail (printf "%s must set sslmode exactly once (found %d; PgJDBC takes the last one)" $where (len $modes)) -}}
+{{- end -}}
+{{- if or (eq (len $modes) 0) (ne (index (append $modes "") 0) "verify-full") -}}
+{{- fail (printf "%s must use sslmode=verify-full (with sslrootcert=%s)" $where $want) -}}
+{{- end -}}
+{{- if or (ne (len $roots) 1) (ne (index (append $roots "") 0) $want) -}}
+{{- fail (printf "%s must set sslrootcert=%s exactly once (the mounted ConfigMap %s)" $where $want (toString $ca.configMapName)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
