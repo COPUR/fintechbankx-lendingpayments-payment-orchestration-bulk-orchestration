@@ -451,11 +451,12 @@ class BulkOrchestrationServiceIT {
     }
 
     /**
-     * Parity with the monolith: a retry after the consent expired is 403 "Consent expired", decided from the
+     * A retry after the consent expired is the one 403 body of ADR-025 item 5, the same as a new upload under an
+     * unusable consent (the monolith answered "Consent expired"; REGRESSION_MAPPING LP-09-D13), decided from the
      * expiry stored with the file at upload (V14 bulk_file.consent_expires_at), without reading the consent again.
      */
     @Test
-    void aRetryAfterTheConsentExpiredIs403ConsentExpiredLikeTheMonolith() throws Exception {
+    void aRetryAfterTheConsentExpiredIsTheUniform403() throws Exception {
         java.time.Instant expiry = java.time.Instant.now().plus(Duration.ofHours(1)).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
         when(consents.findById("CONS-EXPIRY")).thenReturn(Optional.of(new BulkConsentContext("CONS-EXPIRY", "TPP-001",
                 java.util.Set.of("INITIATEBULKPAYMENTS"), expiry, true)));
@@ -482,7 +483,7 @@ class BulkOrchestrationServiceIT {
                         .header("x-idempotency-key", "IDEMP-EXPIRY").contentType("application/json").content(body))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"))
-                .andExpect(jsonPath("$.message").value("Consent expired"));
+                .andExpect(jsonPath("$.message").value("Consent not usable for this request"));
         Mockito.verify(consents, Mockito.never()).findById(any());
         assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".bulk_file where consent_id = 'CONS-EXPIRY'",
                 Integer.class)).isEqualTo(1);

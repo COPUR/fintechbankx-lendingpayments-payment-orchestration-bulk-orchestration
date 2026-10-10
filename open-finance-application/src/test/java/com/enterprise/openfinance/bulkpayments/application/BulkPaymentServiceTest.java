@@ -346,12 +346,14 @@ class BulkPaymentServiceTest {
     }
 
     /**
-     * Parity with the monolith (it checked the consent before the replay): a retry after the consent's expiry is
-     * 403 "Consent expired". The expiry is the one read at upload and stored with the file, checked against the
-     * application clock with no remote read; revocation is still not checked before the replay.
+     * A retry after the consent's expiry is refused with the one 403 body of ADR-025 item 5, the same as a new
+     * upload under an unusable consent (the monolith named the cause, "Consent expired"; see
+     * docs/migration/REGRESSION_MAPPING.md, LP-09-D13). The expiry is the one read at upload and stored with the
+     * file, checked against the application clock with no remote read; revocation is still not checked before
+     * the replay.
      */
     @Test
-    void aRetryAfterTheConsentExpiredIsRefusedLikeTheMonolithFromTheStoredExpiry() {
+    void aRetryAfterTheConsentExpiredIsRefusedWithTheUniform403FromTheStoredExpiry() {
         java.util.concurrent.atomic.AtomicReference<Instant> now =
                 new java.util.concurrent.atomic.AtomicReference<>(Instant.parse("2026-02-09T10:00:00Z"));
         Clock movingClock = new Clock() {
@@ -374,7 +376,7 @@ class BulkPaymentServiceTest {
         int readsBefore = consentPort.reads.get("CONS-IDEMP-EXP");
         assertThatThrownBy(() -> service.submitFile(command("IDEMP-EXP", content, BulkIntegrityMode.PARTIAL_REJECTION)))
                 .isInstanceOf(ForbiddenException.class)
-                .hasMessage(ForbiddenException.CONSENT_EXPIRED);
+                .hasMessage(ForbiddenException.CONSENT_NOT_USABLE);
         assertThat(consentPort.reads.get("CONS-IDEMP-EXP")).as("decided locally").isEqualTo(readsBefore);
         assertThat(filePort.data).containsOnlyKeys(accepted.fileId());
         // Another body under the key is still the idempotency conflict.

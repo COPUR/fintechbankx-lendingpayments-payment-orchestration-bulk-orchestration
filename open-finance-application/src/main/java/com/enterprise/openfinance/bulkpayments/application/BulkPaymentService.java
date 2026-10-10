@@ -83,12 +83,14 @@ public class BulkPaymentService implements BulkPaymentUseCase {
     /**
      * The idempotency record is read first: a retry of an accepted upload is
      * answered as its replay, without reading the consent again (it may be used
-     * up by this very file). The exceptions are what is known locally, as the
-     * monolith refused a retry under an unusable consent: once the consent's
-     * expiry read at upload has passed (application clock), 403 "Consent
-     * expired"; a file Stopped because its consent stopped being usable, the
-     * one 403 body. Revocation is not known locally and not checked here. Only
-     * a new upload reads the consent from the consent service. The consent call, the size and hash checks and the parse run
+     * up by this very file). The exceptions are what is known locally: once the
+     * consent's expiry read at upload has passed (application clock), or once
+     * the file is Stopped because its consent stopped being usable, the retry is
+     * refused with the one 403 body of ADR-025 item 5, the same as a new upload
+     * under an unusable consent (the monolith named the cause, "Consent expired";
+     * REGRESSION_MAPPING LP-09-D13). Revocation is not known locally and not
+     * checked here. Only a new upload reads the consent from the consent service.
+     * The consent call, the size and hash checks and the parse run
      * before any transaction, so no database connection is held while the
      * consent service answers or a large file is parsed. The transaction starts
      * at the idempotency reservation and covers the binding, the file, its
@@ -178,15 +180,10 @@ public class BulkPaymentService implements BulkPaymentUseCase {
                     }
                     BulkFile file = filePort.findById(record.fileId())
                             .orElseThrow(() -> new ResourceNotFoundException("Bulk file not found for idempotency record"));
-                    if (file.consentExpiredAt(now)) {
-                        // Known locally: the consent's expiry, read at upload, has passed. The monolith checked
-                        // the consent before replaying and answered 403 "Consent expired"; so do we, without a
-                        // remote read. Revocation is not known locally and is not checked here.
-                        throw new ForbiddenException(ForbiddenException.CONSENT_EXPIRED);
-                    }
-                    if (file.status() == BulkFileStatus.STOPPED) {
-                        // Known locally: the file was stopped because its consent is no longer usable. The
-                        // monolith checked the consent before replaying and refused; so do we, without a remote read.
+                    if (file.consentExpiredAt(now) || file.status() == BulkFileStatus.STOPPED) {
+                        // Known locally, with no remote read: the consent's expiry read at upload has passed, or
+                        // the file was stopped because its consent is no longer usable. One 403 body for both
+                        // (ADR-025 item 5), as for a new upload; revocation is not known locally and not checked.
                         throw new ForbiddenException(ForbiddenException.CONSENT_NOT_USABLE);
                     }
                     return new BulkUploadResult(file.fileId(), file.status(), command.interactionId(), true,
