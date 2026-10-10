@@ -67,7 +67,7 @@ public class OutboxRelay {
     /**
      * The BulkFile aggregate topic (ADR-019, one topic per aggregate): every bulk file event
      * goes here, keyed by the file id, and the eventType record header names the event.
-     * Computed here rather than stored per row (V14).
+     * Computed here rather than stored per row (V15).
      */
     public static final String TOPIC = "evt.pay.bulk.v1";
     static final Duration INITIAL_BACKOFF = Duration.ofSeconds(5);

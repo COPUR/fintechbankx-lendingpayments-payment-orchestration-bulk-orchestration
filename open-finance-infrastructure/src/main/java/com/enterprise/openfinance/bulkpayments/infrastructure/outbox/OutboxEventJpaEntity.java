@@ -13,7 +13,7 @@ import java.util.UUID;
 /**
  * Row of sc_pay_bulk_orchestration.outbox_event: one envelope waiting to be
  * relayed to Kafka. Written in the bulk file's transaction. The row stores no
- * topic: the relay sends every row to the aggregate topic (V14).
+ * topic: the relay sends every row to the aggregate topic (V15).
  */
 @Entity
 @Table(name = "outbox_event")

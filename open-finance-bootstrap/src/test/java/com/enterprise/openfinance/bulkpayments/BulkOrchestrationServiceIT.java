@@ -882,7 +882,7 @@ class BulkOrchestrationServiceIT {
         assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".outbox_event where status = 'PENDING'",
                 Integer.class)).isZero();
         assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".outbox_event where topic is not null",
-                Integer.class)).as("the relay computes the topic; rows no longer store one (V14)").isZero();
+                Integer.class)).as("the relay computes the topic; rows no longer store one (V15)").isZero();
     }
 
     @Test
