@@ -102,7 +102,9 @@ paths:
             FORBIDDEN, message "Consent not usable for this request", for every consent the caller may not
             use (unknown, another TPP's, not authorised, revoked, expired, without INITIATEBULKPAYMENTS); the
             body never says which. A retry of an accepted upload (same key and body) is answered as its replay
-            before the consent is checked.
+            (202, X-OF-Idempotency HIT) before the consent is read, except once the file is Stopped (its consent
+            stopped being usable during processing): that retry answers this 403, as the monolith refused a
+            retry under an unusable consent.
         '409':
           description: >-
             CONSENT_ALREADY_USED when the consent already authorised another file (a bulk consent
@@ -177,9 +179,11 @@ components:
       in: header
       required: true
       description: >-
-        Unique per TPP and never reusable. A retry with the same key and body returns the original file
-        (header X-OF-Idempotency HIT), even after its consent was used up, revoked or expired; another body
-        under the key is 409 CONFLICT.
+        Unique per TPP and never reusable. A retry with the same key and body is a replay: 202 with header
+        X-OF-Idempotency HIT and the file's current Status, without reading the consent again (it is used up
+        by this very file, and may since be revoked or expired). Once the file is Stopped (processing found
+        its consent no longer usable) a retry answers 403 "Consent not usable for this request" instead.
+        Another body under the key is 409 CONFLICT.
       schema:
         type: string
     JwsSignature:
