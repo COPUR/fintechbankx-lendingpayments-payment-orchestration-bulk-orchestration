@@ -118,8 +118,12 @@ management:
         liveness:
           include: livenessState
   metrics:
+    # Common tags (platform convention): service id, app = service account, squad = namespace.
+    # The chart's ConfigMap sets METRICS_TAG_APP and METRICS_TAG_SQUAD; the platform outbox alerts route on squad.
     tags:
       service: svc-pay-bulk-orchestration
+      app: ${METRICS_TAG_APP:payment-bulk-orchestration-service}
+      squad: ${METRICS_TAG_SQUAD:payments}
     distribution:
       percentiles-histogram:
         http.server.requests: true

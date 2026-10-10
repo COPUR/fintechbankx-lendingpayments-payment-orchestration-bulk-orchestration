@@ -143,7 +143,7 @@ Rollback triggers after step 8 (any one; the rates sustained for 5 minutes):
 1. Trace propagation: `x-fapi-interaction-id` is echoed, logged (`correlationId` in the log pattern) and carried
    on every event as `correlationId`; `traceparent` is forwarded on events.
 2. Structured logs reach the central sink; no payee IBAN, customer id or file content is logged.
-3. Metrics (Prometheus, tag `service=svc-pay-bulk-orchestration`): request rate, latency and status codes;
+3. Metrics (Prometheus, tags `service=svc-pay-bulk-orchestration`, `app=payment-bulk-orchestration-service`, `squad=payments`): request rate, latency and status codes;
    `outbox_pending_events`, `outbox_oldest_pending_age_seconds`, `outbox_parked_rows` (rows parked now),
    `outbox_parked_events_total{exception}` (every park; `exception="OperatorPark"` for a park done with the SQL below),
    `outbox_send_failures_total{exception}`.

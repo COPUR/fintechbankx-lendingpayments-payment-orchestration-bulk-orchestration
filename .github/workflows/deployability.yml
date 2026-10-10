@@ -106,6 +106,9 @@ jobs:
           grep -q "proxy.istio.io/config: '{\"terminationDrainDuration\": \"55s\"}'" <<<"$deployment"
           test "$(grep -oE 'terminationGracePeriodSeconds: [0-9]+' <<<"$deployment" | awk '{print $2}')" -gt 55
           test "$(grep -c 'fintechbankx.io/squad: payments' <<<"$rendered")" -ge 5
+          # Micrometer common tags app = service account and squad = namespace, from the ConfigMap.
+          grep -q 'METRICS_TAG_SQUAD: "payments"' <<<"$rendered"
+          grep -q "METRICS_TAG_APP: \"$sa\"" <<<"$rendered"
           # Pod labels and selection (cicd-templates 335a345): API and Job pods both carry
           # app.kubernetes.io/name=<SA> (mesh Aurora egress); every selector requires component=service, so none
           # selects the db-migration Job pod; only the API pods carry fintechbankx.io/service-id. Both pods run as
