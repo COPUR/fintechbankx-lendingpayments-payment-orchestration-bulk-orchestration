@@ -88,6 +88,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * functionalTest source sets (BulkPaymentsApiIntegrationTest, BulkPaymentsUatTest).
  */
 @SpringBootTest(properties = {
+        // Test configuration: the test database and the mocked Kafka have no TLS (TlsEnforcementInitializer).
+        "fintechbankx.tls.enforce=false",
         "openfinance.bulkpayments.consent.adapter=in-memory",
         "openfinance.bulkpayments.processing.enabled=false",
         "openfinance.bulkpayments.processing.batch-size=500",

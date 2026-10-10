@@ -39,18 +39,27 @@ public class BulkOrchestrationApplication {
      * security, HTTP clients or application beans.
      */
     static int run(String... args) {
-        int skip = args.length > 0 && MIGRATE.equals(args[0]) ? 1 : 0;
-        String[] rest = Arrays.copyOfRange(args, skip, args.length);
         SpringApplication migration = new SpringApplication(DatabaseMigration.class);
         migration.setWebApplicationType(WebApplicationType.NONE);
         migration.setBannerMode(Banner.Mode.OFF);
-        String[] withFlyway = Arrays.copyOf(rest, rest.length + 1);
-        withFlyway[rest.length] = "--spring.flyway.enabled=true";
-        try (ConfigurableApplicationContext context = migration.run(withFlyway)) {
+        try (ConfigurableApplicationContext context = migration.run(migrationArgs(args))) {
             return SpringApplication.exit(context);
         } catch (RuntimeException e) {
             return 1;
         }
+    }
+
+    /**
+     * The migrate run's arguments: the caller's, without the leading "migrate", plus Flyway switched on and
+     * no Kafka client (the Job configures none, so the startup TLS assertion checks the datasource only).
+     */
+    static String[] migrationArgs(String... args) {
+        int skip = args.length > 0 && MIGRATE.equals(args[0]) ? 1 : 0;
+        String[] rest = Arrays.copyOfRange(args, skip, args.length);
+        String[] withFlyway = Arrays.copyOf(rest, rest.length + 2);
+        withFlyway[rest.length] = "--spring.flyway.enabled=true";
+        withFlyway[rest.length + 1] = "--spring.kafka.bootstrap-servers=";
+        return withFlyway;
     }
 
     /** Not a component (no stereotype), so the service's component scan never picks it up. */

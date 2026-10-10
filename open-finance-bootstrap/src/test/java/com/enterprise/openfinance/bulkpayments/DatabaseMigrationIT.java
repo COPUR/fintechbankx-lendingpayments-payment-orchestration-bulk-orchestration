@@ -36,6 +36,7 @@ class DatabaseMigrationIT {
 
         int exitCode = BulkOrchestrationApplication.run(
                 "migrate",
+                arg("fintechbankx.tls.enforce", "false"),
                 arg("spring.datasource.url", PostgresTestDatabase.url()),
                 arg("DB_USERNAME", PostgresTestDatabase.RUNTIME_ROLE),
                 arg("spring.flyway.user", PostgresTestDatabase.ownerUser()),
@@ -71,6 +72,7 @@ class DatabaseMigrationIT {
 
         int exitCode = BulkOrchestrationApplication.run(
                 "migrate",
+                arg("fintechbankx.tls.enforce", "false"),
                 arg("spring.datasource.url", PostgresTestDatabase.url()),
                 arg("DB_USERNAME", PostgresTestDatabase.RUNTIME_ROLE),
                 arg("spring.flyway.user", PostgresTestDatabase.ownerUser()),
@@ -89,10 +91,35 @@ class DatabaseMigrationIT {
                 .startsWith("Deprecated since V15,");
     }
 
+    /**
+     * Governance round 3, item 2: the migration Job fails fast when the datasource URL does not carry
+     * sslmode=verify-full (the local test database has none), before Flyway touches the schema. The other
+     * tests here switch the assertion off explicitly, as test configuration may.
+     */
+    @Test
+    void migrateRefusesADatasourceWithoutVerifyFullBeforeTouchingTheSchema() {
+        PostgresTestDatabase.prepare(SCHEMA);
+
+        int exitCode = BulkOrchestrationApplication.run(
+                "migrate",
+                arg("spring.datasource.url", PostgresTestDatabase.url()),
+                arg("DB_USERNAME", PostgresTestDatabase.RUNTIME_ROLE),
+                arg("spring.flyway.user", PostgresTestDatabase.ownerUser()),
+                arg("spring.flyway.password", PostgresTestDatabase.ownerCredential()),
+                arg("spring.flyway.schemas", SCHEMA),
+                arg("spring.flyway.default-schema", SCHEMA));
+
+        assertThat(exitCode).isNotZero();
+        assertThat(PostgresTestDatabase.owner().queryForObject(
+                "select count(*) from information_schema.tables where table_schema = ?", Integer.class, SCHEMA))
+                .as("nothing was migrated").isZero();
+    }
+
     @Test
     void migrateFailsWithANonZeroExitCodeWhenTheSchemaWasNotBootstrapped() {
         int exitCode = BulkOrchestrationApplication.run(
                 "migrate",
+                arg("fintechbankx.tls.enforce", "false"),
                 arg("spring.datasource.url", PostgresTestDatabase.url()),
                 arg("DB_USERNAME", PostgresTestDatabase.RUNTIME_ROLE),
                 arg("spring.flyway.user", PostgresTestDatabase.ownerUser()),
@@ -111,6 +138,7 @@ class DatabaseMigrationIT {
 
         int exitCode = BulkOrchestrationApplication.run(
                 "migrate",
+                arg("fintechbankx.tls.enforce", "false"),
                 arg("spring.datasource.url", PostgresTestDatabase.url()),
                 arg("DB_USERNAME", PostgresTestDatabase.RUNTIME_ROLE),
                 arg("spring.flyway.user", PostgresTestDatabase.ownerUser()),
