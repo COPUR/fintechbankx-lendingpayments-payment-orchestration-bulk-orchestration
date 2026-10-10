@@ -698,6 +698,31 @@ class BulkOrchestrationServiceIT {
         org.mockito.Mockito.verify(consents, org.mockito.Mockito.never()).findById(any());
     }
 
+    /**
+     * LP-09-U01 (rule INT-BULK-FAPI-INTERACTION-ID-400): a GET without X-FAPI-Interaction-ID was 500 on the
+     * monolith (an unhandled exception); here it is a client error, 400, in the service's one error shape.
+     */
+    @Test
+    void aGetWithoutAnInteractionIdIs400InTheServiceErrorShape() throws Exception {
+        String fileId = upload("IDEMP-NO-IX", csv("INS-1," + IBAN + ",1.00"), "PARTIAL_REJECTION");
+
+        JsonNode error = json.readTree(mvc.perform(get("/open-finance/v1/file-payments/{id}", fileId)
+                        .header("Authorization", "DPoP tpp-001-token")
+                        .accept("application/json")
+                        .with(dpop("tpp-001-token", TPP_001_KEY)))
+                .andExpect(status().isBadRequest())
+                .andReturn().getResponse().getContentAsString());
+
+        assertThat(error.at("/code").asText()).isEqualTo("INVALID_REQUEST");
+        assertThat(error.at("/message").asText()).isEqualTo("Missing header: X-FAPI-Interaction-ID");
+        assertThat(error.has("interactionId")).isTrue();
+        assertThat(error.get("interactionId").isNull()).isTrue();
+        assertThat(java.time.Instant.parse(error.at("/timestamp").asText())).isNotNull();
+        java.util.List<String> fields = new java.util.ArrayList<>();
+        error.fieldNames().forEachRemaining(fields::add);
+        assertThat(fields).containsExactly("code", "message", "interactionId", "timestamp");
+    }
+
     @Test
     void twoProcessorsNeverClaimTheSameFile() throws Exception {
         String first = upload("IDEMP-CLAIM-1", csv("INS-1," + IBAN + ",1.00"), "PARTIAL_REJECTION");

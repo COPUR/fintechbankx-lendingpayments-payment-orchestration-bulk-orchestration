@@ -36,10 +36,17 @@ service `BulkPaymentService`). The monolith kept every bulk file in memory.
 | A consent id in the upload body the caller may not use (another TPP's included) | 403 with a message per cause | 403 "Consent not usable for this request" (one body; ADR-025 a7fe0c2 is silent on request-body consent ids, so 403 is kept) |
 | Consent service unavailable | n/a (in memory) | 503 |
 | Malformed JSON body | 500 | 400 |
+| A request without `X-FAPI-Interaction-ID` (GET status shown in LP-09-U01; every route requires it) | 500 (unhandled exception) | 400 `INVALID_REQUEST` "Missing header: X-FAPI-Interaction-ID" (rule INT-BULK-FAPI-INTERACTION-ID-400, proposed) |
 | A second file on a consent that already authorised a file (also two concurrent uploads) | accepted (one consent could carry any number of files) | 409 `CONSENT_ALREADY_USED`; a replay of the first upload with its idempotency key is still 202 HIT |
 | Missing or unsupported `Currency`, or an amount finer than its minor units | n/a (no currency) | 400 |
 | Bearer token, or missing / invalid / replayed DPoP proof | accepted when the DPoP header was non-empty | 401 `INVALID_DPOP_PROOF` |
 | Any route outside `/open-finance/v1/file-payments/**` | 404 | 401/403 (denied by default) |
+
+## Parity run findings (LP-09)
+
+| Scenario | Finding | Status |
+|---|---|---|
+| LP-09-U01 | `GET /open-finance/v1/file-payments/{fileId}` without `X-FAPI-Interaction-ID`: monolith 500, service 400 | Intentional, proposed rule **INT-BULK-FAPI-INTERACTION-ID-400**: a missing required header is a client error; the monolith's 500 was an unhandled exception, not a contract. The 400 uses the service's one error shape (`BulkErrorResponse`: `code` `INVALID_REQUEST`, `message` "Missing header: X-FAPI-Interaction-ID", `interactionId` null, `timestamp`), the same fields as every other 4xx here (`BulkOrchestrationServiceIT.aGetWithoutAnInteractionIdIs400InTheServiceErrorShape`). Pending: the rule's acceptance by the owner squad and its entry in the harness's allowed-difference list |
 
 ## Not applicable
 
