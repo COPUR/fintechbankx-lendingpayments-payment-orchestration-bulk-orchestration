@@ -24,7 +24,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Relays committed outbox rows to Kafka in insertion order.
+ * Relays committed outbox rows to Kafka in insertion order, all to the
+ * BulkFile aggregate topic {@link #TOPIC} (ADR-019).
  *
  * One replica relays at a time ({@link RelayLock}: a session-level Postgres
  * advisory lock held for the whole run), so the service can scale out without
@@ -63,6 +64,12 @@ import java.util.concurrent.TimeUnit;
 public class OutboxRelay {
 
     public static final long RELAY_LOCK_KEY = 0x7061795F62756CL; // "pay_bul"
+    /**
+     * The BulkFile aggregate topic (ADR-019, one topic per aggregate): every bulk file event
+     * goes here, keyed by the file id, and the eventType record header names the event.
+     * Computed here rather than stored per row (V15).
+     */
+    public static final String TOPIC = "evt.pay.bulk.v1";
     static final Duration INITIAL_BACKOFF = Duration.ofSeconds(5);
     static final Duration MAX_BACKOFF = Duration.ofMinutes(5);
     static final String FAILURE_COUNTER = "outbox.send.failures";
@@ -152,8 +159,8 @@ public class OutboxRelay {
                 });
                 recordParked(failure);
                 blockedAggregates.add(row.getAggregateId());
-                log.error("Outbox relay parked event {} for {} on a payload error ({}); its file's later events"
-                        + " wait until it is replayed by hand", row.getEventId(), row.getTopic(), failure);
+                log.error("Outbox relay parked event {} ({}) on a payload error ({}); its file's later events"
+                        + " wait until it is replayed by hand", row.getEventId(), row.getEventType(), failure);
                 continue;
             }
             Instant publishedAt = clock.instant();
@@ -186,14 +193,14 @@ public class OutboxRelay {
         for (OutboxEventJpaEntity parked : outbox.findUncountedParks()) {
             parked.markParkCounted();
             recordParked(OPERATOR_PARK);
-            log.warn("Outbox event {} for {} was parked by an operator", parked.getEventId(), parked.getTopic());
+            log.warn("Outbox event {} ({}) was parked by an operator", parked.getEventId(), parked.getEventType());
         }
     }
 
     private void pause(Instant now, OutboxEventJpaEntity row, String failure) {
         pausedUntil = now.plus(backoff);
-        log.warn("Outbox relay stopped at event {} for {} ({}); no row marked, retrying after {}",
-                row.getEventId(), row.getTopic(), failure, backoff);
+        log.warn("Outbox relay stopped at event {} ({}) to {} ({}); no row marked, retrying after {}",
+                row.getEventId(), row.getEventType(), TOPIC, failure, backoff);
         Duration doubled = backoff.multipliedBy(2);
         backoff = doubled.compareTo(MAX_BACKOFF) > 0 ? MAX_BACKOFF : doubled;
     }
@@ -229,8 +236,12 @@ public class OutboxRelay {
         return cause.getClass().getSimpleName();
     }
 
+    /**
+     * The record for a row: aggregate topic, key = aggregateId (the envelope's aggregateId, UTF-8
+     * text through the String serializer), and the ADR-019 section 3 headers as UTF-8 text.
+     */
     static ProducerRecord<String, String> toRecord(OutboxEventJpaEntity row) {
-        ProducerRecord<String, String> record = new ProducerRecord<>(row.getTopic(), row.getAggregateId(), row.getPayload());
+        ProducerRecord<String, String> record = new ProducerRecord<>(TOPIC, row.getAggregateId(), row.getPayload());
         record.headers().add("eventType", row.getEventType().getBytes(StandardCharsets.UTF_8));
         record.headers().add("eventId", row.getEventId().toString().getBytes(StandardCharsets.UTF_8));
         record.headers().add("correlationId", row.getCorrelationId().getBytes(StandardCharsets.UTF_8));

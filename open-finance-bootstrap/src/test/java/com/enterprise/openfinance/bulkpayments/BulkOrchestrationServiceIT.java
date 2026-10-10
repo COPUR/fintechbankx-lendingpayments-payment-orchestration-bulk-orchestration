@@ -942,11 +942,15 @@ class BulkOrchestrationServiceIT {
 
         ArgumentCaptor<ProducerRecord<String, String>> sent = ArgumentCaptor.forClass(ProducerRecord.class);
         org.mockito.Mockito.verify(kafka, org.mockito.Mockito.times(2)).send(sent.capture());
-        assertThat(sent.getAllValues()).extracting(ProducerRecord::topic)
-                .containsExactly("evt.pay.bulk.accepted.v1", "evt.pay.bulk.rejected.v1");
+        assertThat(sent.getAllValues()).extracting(ProducerRecord::topic).containsOnly("evt.pay.bulk.v1");
+        assertThat(sent.getAllValues()).extracting(r -> new String(r.headers().lastHeader("eventType").value(),
+                java.nio.charset.StandardCharsets.UTF_8))
+                .containsExactly("Payments.BulkFile.Accepted.v1", "Payments.BulkFile.Rejected.v1");
         assertThat(sent.getAllValues()).extracting(ProducerRecord::key).containsOnly(fileId);
         assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".outbox_event where status = 'PENDING'",
                 Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("select count(*) from " + SCHEMA + ".outbox_event where topic is not null",
+                Integer.class)).as("the relay computes the topic; rows no longer store one (V15)").isZero();
     }
 
     @Test

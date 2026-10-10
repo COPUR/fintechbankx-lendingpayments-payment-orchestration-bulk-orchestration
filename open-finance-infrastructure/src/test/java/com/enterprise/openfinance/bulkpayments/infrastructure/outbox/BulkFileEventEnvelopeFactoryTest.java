@@ -27,7 +27,6 @@ class BulkFileEventEnvelopeFactoryTest {
         OutboxEventJpaEntity row = factory.toOutboxRow(new BulkFileAccepted(eventId, "FILE-1", 0L, AT, "CONS-1",
                 "TPP-001", BulkIntegrityMode.PARTIAL_REJECTION, 3, 2, 1, Money.of("350", "AED")), "ix-1");
 
-        assertThat(row.getTopic()).isEqualTo("evt.pay.bulk.accepted.v1");
         assertThat(row.getEventType()).isEqualTo("Payments.BulkFile.Accepted.v1");
         assertThat(row.getAggregateType()).isEqualTo("BulkFile");
         assertThat(row.getAggregateId()).isEqualTo("FILE-1");
@@ -58,16 +57,15 @@ class BulkFileEventEnvelopeFactoryTest {
     void rejectedEnvelope() throws Exception {
         OutboxEventJpaEntity rejected = factory.toOutboxRow(new BulkFileRejected(UUID.randomUUID(), "FILE-2", 1L, AT,
                 2, 2, BulkFileRejected.Reason.CONSENT_NOT_USABLE), "FILE-2");
-        assertThat(rejected.getTopic()).isEqualTo("evt.pay.bulk.rejected.v1");
         assertThat(rejected.getEventType()).isEqualTo("Payments.BulkFile.Rejected.v1");
         assertThat(json.readTree(rejected.getPayload()).get("data").get("rejectedCount").asInt()).isEqualTo(2);
         assertThat(json.readTree(rejected.getPayload()).get("data").get("reason").asText())
                 .isEqualTo("CONSENT_NOT_USABLE");
     }
 
-    /** Catalog rule: evt.<ctx>.<aggregate>.<event>.v<n> where <event> is the eventType's event, lower case. */
+    /** One topic per aggregate (ADR-019): every BulkFile event type goes to evt.pay.bulk.v1. */
     @Test
-    void topicEventSegmentEqualsTheEventTypeEvent() {
+    void everyEventTypeGoesToTheAggregateTopic() {
         List<OutboxEventJpaEntity> rows = List.of(
                 factory.toOutboxRow(new BulkFileAccepted(UUID.randomUUID(), "F", 0L, AT, "C", "T",
                         BulkIntegrityMode.FULL_REJECTION, 1, 1, 0, Money.of("1", "AED")), "F"),
@@ -75,12 +73,8 @@ class BulkFileEventEnvelopeFactoryTest {
                         BulkFileRejected.Reason.ALL_ITEMS_REJECTED), "F"));
 
         for (OutboxEventJpaEntity row : rows) {
-            String[] topic = row.getTopic().split("\\.");
-            String[] type = row.getEventType().split("\\.");
-            assertThat(topic).hasSize(5);
-            assertThat(topic[0] + "." + topic[1] + "." + topic[2]).isEqualTo("evt.pay.bulk");
-            assertThat(topic[3]).isEqualTo(type[2].toLowerCase(java.util.Locale.ROOT));
-            assertThat(topic[4]).isEqualTo(type[3]);
+            assertThat(OutboxRelay.toRecord(row).topic()).isEqualTo("evt.pay.bulk.v1");
+            assertThat(row.getEventType()).startsWith("Payments.BulkFile.").endsWith(".v1");
         }
     }
 

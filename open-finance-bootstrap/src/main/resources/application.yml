@@ -166,7 +166,7 @@ openfinance:
     outbox:
       retention: P7D
       relay:
-        # Off until the evt.pay.bulk.*.v1 topics exist (runbook step 4); events wait in the outbox.
+        # Off until the evt.pay.bulk.v1 topic exists (runbook step 4); events wait in the outbox.
         enabled: ${OUTBOX_RELAY_ENABLED:false}
         interval: PT1S
         batch-size: 100
