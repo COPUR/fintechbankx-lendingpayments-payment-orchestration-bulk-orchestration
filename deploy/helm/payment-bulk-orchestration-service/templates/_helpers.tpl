@@ -77,7 +77,7 @@ ExternalSecret adds its own (service or db-migration).
 {{- /*
 Values guard (governance round 3, item 1; round 6, guardrail 4a). The platform
 guard is vendored byte-identical in _fbx_helpers.tpl (cicd-templates
-charts/fintechbankx-service/templates/_helpers.tpl at a4f0072; sha256 pinned
+charts/fintechbankx-service/templates/_helpers.tpl at 6b6c317; sha256 pinned
 in README.md and checked by the deployability workflow). fbx.guard reads only
 .Values, so bulk.guard feeds it an adapter dict built from this chart's own
 values, mapping every route the chart renders:
@@ -88,7 +88,7 @@ values, mapping every route the chart renders:
   javaToolOptions   -> none (the image's own JAVA_TOOL_OPTIONS; a config
                        JAVA_TOOL_OPTIONS / JDK_JAVA_OPTIONS / _JAVA_OPTIONS is
                        checked as a config key)
-  databaseCa        -> rdsCaBundle (enabled, mountPath, key)
+  databaseCa        -> rdsCaBundle (enabled, mountPath, key, configMapName)
   kafka.runtime     -> kafkaStrimzi.enabled (false -> msk, true -> strimzi);
                        fbx.kafkaProfile renders SPRING_PROFILES_ACTIVE from it
   externalSecret    -> the service ExternalSecret's fixed entries
@@ -103,14 +103,16 @@ Rules kept on top of fbx.guard (bulk.guardEnv), because it does not do them:
   - a non-scalar config value (a dotted name given to --set nests into a map
     that would render as the env name "spring"; quote it in a values file,
     where the name rules apply);
-  - names under spring.kafka.(properties|ssl|producer.properties|
-    consumer.properties|admin.properties|streams.properties): fbx checks
-    *security.protocol and *endpoint.identification.algorithm values and
-    *ssl.bundle names, but a trust store path, certificate or other client
-    property there can still replace the Kafka trust anchor; the profiles
-    render those from the chart's own KAFKA_TLS_* entries;
+  - names under spring.kafka.(properties|producer.properties|
+    consumer.properties|admin.properties|streams.properties): fbx refuses the
+    ssl.* names there and checks the *security.protocol and
+    *endpoint.identification.algorithm values, but leaves the other raw client
+    properties (sasl.*, ...) alone; the profiles carry the Kafka client
+    settings, so this chart accepts none of them from values;
   - kafkaStrimzi.enabled must be a boolean.
-Dropped (fbx.guard covers them): JDBC URL parsing, datasource/Flyway/Liquibase/
+Dropped (fbx.guard covers them, 6b6c317 included): spring.kafka[.<client>].ssl.*
+and spring.kafka[.<client>].properties.ssl.* names, spring.data.mongodb.*,
+kafka and mongodb in JVM option values, JDBC URL parsing, datasource/Flyway/Liquibase/
 R2DBC/application.json/jdbc_url/sslfactory/sslhostnameverifier names,
 spring.config.* and spring.profiles.* in every form, fintechbankx.tls.*,
 spring.ssl.* and ssl bundle names, DB_SSL_ROOT_CERT and other sslmode/
@@ -137,7 +139,7 @@ java.security.properties, '$(' and '${' included), key shapes.
       "envFrom" (list)
       "extraEnvFrom" (list)
       "javaToolOptions" ""
-      "databaseCa" (dict "enabled" true "mountPath" .Values.rdsCaBundle.mountPath "key" .Values.rdsCaBundle.key)
+      "databaseCa" (dict "enabled" true "mountPath" .Values.rdsCaBundle.mountPath "key" .Values.rdsCaBundle.key "configMapName" .Values.rdsCaBundle.configMapName)
       "kafka" (dict "runtime" (include "bulk.kafkaRuntime" .))
       "externalSecret" (dict "enabled" .Values.externalSecret.enabled
                              "data" (list (dict "secretKey" "SPRING_DATASOURCE_PASSWORD" "property" "password" "remoteSecretName" (.Values.externalSecret.remoteSecretName | default ""))
@@ -155,8 +157,8 @@ java.security.properties, '$(' and '${' included), key shapes.
 {{- fail (printf "%s.%s must be a scalar: a dotted name given to --set becomes a nested map; quote it in a values file (templates/_helpers.tpl, bulk.guardEnv)" $field $key) -}}
 {{- end -}}
 {{- $n := include "fbx.canonicalName" $key -}}
-{{- if or (regexMatch "(?i)^spring[._-]?kafka[._-]?(properties|ssl|producer[._-]?properties|consumer[._-]?properties|admin[._-]?properties|streams[._-]?properties)[._-]" (toString $key)) (regexMatch "^spring\\.kafka\\.(properties|ssl|producer\\.properties|consumer\\.properties|admin\\.properties|streams\\.properties)\\." $n) -}}
-{{- fail (printf "%s.%s is not allowed: a Kafka client or SSL property there can replace the client's trust anchor or TLS settings past the chart's checks; the kafka-msk and kafka-strimzi profiles carry them (templates/_helpers.tpl, bulk.guardEnv)" $field $key) -}}
+{{- if or (regexMatch "(?i)^spring[._-]?kafka[._-]?(properties|producer[._-]?properties|consumer[._-]?properties|admin[._-]?properties|streams[._-]?properties)[._-]" (toString $key)) (regexMatch "^spring\\.kafka\\.(properties|producer\\.properties|consumer\\.properties|admin\\.properties|streams\\.properties)\\." $n) -}}
+{{- fail (printf "%s.%s is not allowed: a raw Kafka client property there can change the client's settings past the chart's checks; the kafka-msk and kafka-strimzi profiles carry them (templates/_helpers.tpl, bulk.guardEnv)" $field $key) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

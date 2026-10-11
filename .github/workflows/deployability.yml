@@ -35,13 +35,14 @@ jobs:
         with:
           version: v3.16.3
       # Guardrail 4a: templates/_fbx_helpers.tpl is a byte-identical copy of the platform chart's helpers
-      # (cicd-templates charts/fintechbankx-service/templates/_helpers.tpl at a4f0072, README "Chart values guard");
-      # an edited copy fails here. Re-copy from the platform and update the commit and the sum together.
+      # (README "Vendoring the guard"); an edited copy, an fbx.* redefinition in another template or a workload
+      # template that does not call the guard first fails here. Re-copy from the platform and update the commit and
+      # the sum together; scripts/ci/verify-vendored-guard.sh is a byte copy of the platform script at the same commit.
       - name: Vendored guard matches the platform copy
         run: |
-          sha256sum -c --strict - <<'SUMS'
-          1fd684735383301baf3052c5d8978dd86edee1ac1c66ebfb944a8a6a166f4c92  deploy/helm/payment-bulk-orchestration-service/templates/_fbx_helpers.tpl
-          SUMS
+          # Source repository: COPUR/fintechbankx-platform-delivery-iac-cicd-templates
+          # Path: charts/fintechbankx-service/templates/_helpers.tpl, commit 6b6c317 (sha256 pinned below)
+          scripts/ci/verify-vendored-guard.sh deploy/helm/payment-bulk-orchestration-service 8ba2e4a11ead019c25bf0a01e4fe4bbabb6fef0e1980e5fa828ccb9f5673f8ba
       - name: Lint and render chart
         run: |
           chart=deploy/helm/payment-bulk-orchestration-service
@@ -185,6 +186,55 @@ jobs:
             echo "a config value containing a newline injected an extra ConfigMap key" >&2; exit 1
           fi
           [ "$(python3 -c "import sys,yaml; print(sum(1 for d in yaml.safe_load_all(sys.stdin) if d and d.get('kind')=='ConfigMap' for k in d['data'] if k in ('SPRING_CONFIG_IMPORT','SPRING_DATASOURCE_URL')))" <<<"$injected")" -eq 0 ]
+          # refuse <expected ERE> <helm args...>: the render must fail, and for that reason, so a probe cannot
+          # pass because helm failed to parse it or another rule fired first.
+          refuse() {
+            local expect="$1"; shift
+            local out
+            if out="$(helm template ci "$chart" --namespace payments $args "$@" 2>&1 >/dev/null)"; then
+              echo "chart rendered with $*" >&2; exit 1
+            fi
+            if ! grep -qE -- "$expect" <<<"$out"; then
+              echo "chart refused $* for another reason than '$expect': $out" >&2; exit 1
+            fi
+          }
+          # What 6b6c317 adds, each refused for its own reason. The database CA mount is pinned (fbx.validateDatabaseCa):
+          # /app is the image WORKDIR and Spring Boot loads ./config/application.yml; another ConfigMap or key replaces
+          # the database trust anchor; the adapter must pass configMapName (Helm deletes a key set to null).
+          refuse 'databaseCa.mountPath must be /etc/fintechbankx/rds-ca' --set-string rdsCaBundle.mountPath=/app/config
+          refuse 'databaseCa.key must be global-bundle.pem' --set-string rdsCaBundle.key=other-bundle.pem
+          refuse 'databaseCa.configMapName must be rds-ca-bundle' --set-string rdsCaBundle.configMapName=any-config
+          refuse 'databaseCa.configMapName is required while databaseCa.enabled' --set rdsCaBundle.configMapName=null
+          # Kafka client TLS names (fbx.validateKafkaTlsValue and the name rule), whatever the runtime.
+          refuse 'config.SPRING_KAFKA_SSL_TRUST_STORE_LOCATION is not allowed: a Kafka client TLS setting' --set-string config.SPRING_KAFKA_SSL_TRUST_STORE_LOCATION=file:/etc/other/any.jks
+          refuse 'config.SPRING_KAFKA_PRODUCER_PROPERTIES_SSL_TRUSTSTORE_CERTIFICATES is not allowed: a Kafka client TLS setting' --set-string config.SPRING_KAFKA_PRODUCER_PROPERTIES_SSL_TRUSTSTORE_CERTIFICATES=x
+          refuse 'config.spring.kafka.properties.ssl.truststore.location is not allowed: a Kafka client TLS setting' --set-string 'config.spring\.kafka\.properties\.ssl\.truststore\.location=/tmp/x'
+          refuse 'config.KAFKA_TLS_CERT is not allowed' --set kafkaStrimzi.enabled=true --set-string config.KAFKA_TLS_CERT=x
+          refuse 'config.KAFKA_TLS_CA is not allowed' --set-string config.KAFKA_TLS_CA=x
+          refuse 'config.KAFKA_SECURITY_PROTOCOL must be SASL_SSL or SSL' --set-string config.KAFKA_SECURITY_PROTOCOL=PLAINTEXT
+          refuse 'config.KAFKA_SECURITY_PROTOCOL must be SSL with kafka.runtime strimzi' --set kafkaStrimzi.enabled=true --set-string config.KAFKA_SECURITY_PROTOCOL=SASL_SSL
+          refuse 'config.SPRING_KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM must be https' --set-string config.SPRING_KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM=
+          refuse 'config.SPRING_KAFKA_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM must be https' --set-string config.SPRING_KAFKA_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM=
+          # Chart-local rule kept on top of the guard: raw Kafka client properties outside ssl.* (sasl.*, ...).
+          refuse 'config.spring.kafka.properties.sasl.jaas.config is not allowed: a raw Kafka client property' --set-string 'config.spring\.kafka\.properties\.sasl\.jaas\.config=x'
+          refuse 'config.spring.kafka.consumer.properties.sasl.mechanism is not allowed: a raw Kafka client property' --set-string 'config.spring\.kafka\.consumer\.properties\.sasl\.mechanism=x'
+          refuse 'config.SPRING_KAFKA_PRODUCER_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM is not allowed: a raw Kafka client property' --set-string config.SPRING_KAFKA_PRODUCER_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM=https
+          # DocumentDB names: the connection string comes only from MONGODB_URI in a Secret.
+          refuse 'config.SPRING_DATA_MONGODB_URI is not allowed: a spring.data.mongodb.\* property' --set-string config.SPRING_DATA_MONGODB_URI=mongodb://docdb.example.internal:27017/db
+          refuse 'config.MONGODB_URI is not allowed: MONGODB_URI is the DocumentDB connection string' --set-string config.MONGODB_URI=mongodb://docdb.example.internal:27017/db
+          # Property reading: Spring Boot splits an environment name on '.' only and drops '_' and other characters
+          # inside an element, so these bind spring.kafka.ssl.*, spring.data.mongodb.* and spring.profiles.active
+          # (fbx.propertyName); a security.protocol spelled with '-', '_' or brackets is value-checked all the same.
+          refuse 'config.spring.kafka.s_sl.trust-store-type is not allowed: a Kafka client TLS setting' --set-string 'config.spring\.kafka\.s_sl\.trust-store-type=PKCS12'
+          refuse 'config.spring.data.mongo_db.host is not allowed: a spring.data.mongodb.\* property' --set-string 'config.spring\.data\.mongo_db\.host=docdb.example.internal'
+          refuse 'config.spring.pro_files.active is not allowed' --set-string 'config.spring\.pro_files\.active=local'
+          refuse 'config.spring.kafka.secu-rity.protocol must be SASL_SSL or SSL' --set-string 'config.spring\.kafka\.secu-rity\.protocol=PLAINTEXT'
+          refuse 'config.spring.kafka.security.pro_tocol must be SASL_SSL or SSL' --set-string 'config.spring\.kafka\.security\.pro_tocol=PLAINTEXT'
+          refuse 'config.spring.kafka.properties\[security.protocol\] must be SASL_SSL or SSL' --set-string 'config.spring\.kafka\.properties\[security\.protocol\]=PLAINTEXT'
+          refuse 'config.fintech-bankx.tls.enforce is not allowed' --set-string 'config.fintech-bankx\.tls\.enforce=false'
+          # JVM options in a config entry: kafka and mongodb are refused with the datasource and TLS settings.
+          refuse 'config.JAVA_TOOL_OPTIONS must not mention .*kafka' --set-string 'config.JAVA_TOOL_OPTIONS=-Dspring.kafka.bootstrap-servers=other.example.internal:9092'
+          refuse 'config.JAVA_TOOL_OPTIONS must not mention .*mongodb' --set-string 'config.JAVA_TOOL_OPTIONS=-Dspring.data.mongodb.uri=mongodb://docdb.example.internal:27017/db'
           # Still allowed: the datasource credentials and a JVM option that mentions none of the guarded settings.
           helm template ci "$chart" --namespace payments $args --set-string config.SPRING_DATASOURCE_USERNAME=payment_bulk_app > /dev/null
           helm template ci "$chart" --namespace payments $args --set-string "config.JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError" > /dev/null
