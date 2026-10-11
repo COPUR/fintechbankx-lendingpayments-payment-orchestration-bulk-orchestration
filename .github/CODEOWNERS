@@ -1,0 +1,19 @@
+# bounded_context: payment_bulk_orchestration (capability bulkpayments)
+# owning_squad: Recurring and Bulk Payments Squad
+# owning_tribe: Lending & Payments Tribe
+# review_cadence: quarterly
+# data_owner: Recurring and Bulk Payments Squad (sc_pay_bulk_orchestration)
+# upstream_dependencies: svc-of-consent-authorization; Keycloak realm fintechbankx; Kafka (MSK or Strimzi)
+# published_events: evt.pay.bulk.v1 (Payments.BulkFile.Accepted.v1, Payments.BulkFile.Rejected.v1, Payments.BulkFile.Completed.v1 reserved)
+# consumed_events: none
+* @COPUR
+
+# AsyncAPI breaking-change waivers need an owner review (cicd-templates 13d09a1).
+**/*.accepted-breaking.txt @COPUR
+
+# Guardrail 4a: the vendored platform guard (cicd-templates 6b6c317), its verifier, the workflow
+# that pins the guard's sha256, and this file. Takes effect once code-owner review is required.
+/deploy/helm/payment-bulk-orchestration-service/templates/_fbx_helpers.tpl @COPUR
+/scripts/ci/verify-vendored-guard.sh @COPUR
+/.github/workflows/deployability.yml @COPUR
+/.github/CODEOWNERS @COPUR

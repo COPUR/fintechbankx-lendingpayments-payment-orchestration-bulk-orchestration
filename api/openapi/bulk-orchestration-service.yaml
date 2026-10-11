@@ -2,49 +2,19 @@ openapi: 3.0.3
 info:
   title: Bulk Orchestration Service API
   version: 0.1.0
-  description: API for corporate bulk payment upload, execution and reporting.
+  description: >-
+    API for corporate bulk payment upload, execution and reporting.
+    A file id that does not exist and one that belongs to another TPP get the same answer: 404 NOT_FOUND
+    with the message "Bulk file not found" (ADR-025 item 5); 403 is not used for another TPP's file.
 servers:
   - url: https://api.example.com/open-finance/v1
 paths:
-  /payment-consents/{consentId}/file:
-    post:
-      summary: Upload bulk payment file
-      operationId: uploadBulkFile
-      security:
-        - bearerAuth: []
-      parameters:
-        - $ref: '#/components/parameters/InteractionId'
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - $ref: '#/components/parameters/JwsSignature'
-        - $ref: '#/components/parameters/Dpop'
-        - name: consentId
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              properties:
-                file:
-                  type: string
-                  format: binary
-      responses:
-        '202':
-          description: File accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FilePaymentResponse'
   /file-payments:
     post:
       summary: Initiate bulk payment execution
       operationId: executeBulkFile
       security:
-        - bearerAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/InteractionId'
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -60,12 +30,31 @@ paths:
               properties:
                 Data:
                   type: object
-                  required: [ConsentId, FilePaymentId]
+                  required: [ConsentId, FileName, FileContent, FileHash, Currency]
                   properties:
                     ConsentId:
                       type: string
-                    FilePaymentId:
+                      description: Bulk payment consent with scope INITIATEBULKPAYMENTS.
+                    FileName:
                       type: string
+                    FileContent:
+                      type: string
+                      description: CSV with header instruction_id,payee_iban,amount.
+                    FileHash:
+                      type: string
+                      description: Base64url SHA-256 of FileContent (no padding).
+                    Currency:
+                      type: string
+                      pattern: '^[A-Z]{3}$'
+                      description: >-
+                        ISO 4217 currency of every amount in the file. Required and never
+                        defaulted; an amount with more decimals than the currency's minor
+                        units (0 for JPY, 2 for AED, 3 for KWD), or with more than 15 integer digits, is refused
+                        with 400 Schema Validation Failed.
+                    IntegrityMode:
+                      type: string
+                      enum: [PARTIAL_REJECTION, FULL_REJECTION]
+                      description: Defaults to PARTIAL_REJECTION when absent.
       responses:
         '202':
           description: Bulk execution accepted
@@ -73,12 +62,27 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FilePaymentResponse'
+        '400':
+          description: Invalid file, hash, Currency or an amount finer than the currency's minor units.
+        '403':
+          description: >-
+            FORBIDDEN, message "Consent not usable for this request": one uniform 403 (ADR-025 item 5) for
+            every consent the caller may not use (unknown, another TPP's, not authorised, revoked, expired,
+            without INITIATEBULKPAYMENTS), on a new upload and on a retry alike; the body never says which. A
+            retry of an accepted upload (same key and body) is answered as its replay (202, X-OF-Idempotency
+            HIT) before the consent is read, except in two cases known locally, which get this same 403: once
+            the consent's expiry read at upload has passed, and once the file is Stopped (its consent stopped
+            being usable during processing). No 403 of this API names its cause.
+        '409':
+          description: >-
+            CONSENT_ALREADY_USED when the consent already authorised another file (a bulk consent
+            authorises one file), or CONFLICT when the idempotency key was used with another body.
   /file-payments/{filePaymentId}:
     get:
       summary: Get bulk payment status
       operationId: getBulkStatus
       security:
-        - bearerAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/InteractionId'
         - name: filePaymentId
@@ -93,12 +97,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FilePaymentResponse'
+        '404':
+          description: >-
+            NOT_FOUND, message "Bulk file not found", for an unknown file id and for another TPP's file id
+            alike (ADR-025 item 5), so a TPP cannot probe for other TPPs' file ids.
   /file-payments/{filePaymentId}/report:
     get:
       summary: Get bulk execution report
       operationId: getBulkReport
       security:
-        - bearerAuth: []
+        - dpopAuth: []
       parameters:
         - $ref: '#/components/parameters/InteractionId'
         - name: filePaymentId
@@ -113,12 +121,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BulkReportResponse'
+        '404':
+          description: >-
+            NOT_FOUND, message "Bulk file not found", for an unknown file id and for another TPP's file id
+            alike (ADR-025 item 5), so a TPP cannot probe for other TPPs' file ids.
 components:
   securitySchemes:
-    bearerAuth:
+    dpopAuth:
       type: http
-      scheme: bearer
+      scheme: DPoP
       bearerFormat: JWT
+      description: >-
+        DPoP-bound access token (RFC 9449) from realm fintechbankx with aud
+        svc-pay-bulk-orchestration and cnf.jkt. Sent as "Authorization: DPoP <token>"
+        with a DPoP proof header; a Bearer token gets 401.
   parameters:
     InteractionId:
       name: x-fapi-interaction-id
@@ -130,18 +146,32 @@ components:
       name: x-idempotency-key
       in: header
       required: true
+      description: >-
+        Unique per TPP and never reusable. A retry with the same key and body is a replay: 202 with header
+        X-OF-Idempotency HIT and the file's current Status, without reading the consent again (it is used up
+        by this very file, and may since be revoked). Once the consent's expiry, as read at upload, has
+        passed, or once the file is Stopped (processing found its consent no longer usable), a retry answers
+        the uniform 403 "Consent not usable for this request" instead (ADR-025 item 5). Another body under
+        the key is 409 CONFLICT.
       schema:
         type: string
     JwsSignature:
       name: x-jws-signature
       in: header
-      required: true
+      required: false
+      description: Accepted but not verified by this service yet.
       schema:
         type: string
     Dpop:
       name: DPoP
       in: header
       required: true
+      description: >-
+        DPoP proof JWT (RFC 9449): typ dpop+jwt, ES256 or PS256, public jwk header,
+        htm and htu of this request, iat within 5 minutes (1 minute future skew),
+        ath of the access token and a single-use jti. The jwk thumbprint must equal
+        the token's cnf.jkt. Any failure gets 401 with WWW-Authenticate DPoP
+        error="invalid_dpop_proof".
       schema:
         type: string
   schemas:
@@ -157,15 +187,55 @@ components:
               type: string
     BulkReportResponse:
       type: object
+      description: >-
+        A Stopped file (its consent stopped being usable during processing) releases nothing: its report
+        shows every item with Status Rejected (items accepted at validation with ErrorMessage "Consent not
+        usable", items rejected at validation with their own reason), AcceptedCount 0 and RejectedCount equal
+        to TotalCount, matching its Payments.BulkFile.Rejected.v1 event on evt.pay.bulk.v1 (reason CONSENT_NOT_USABLE).
       properties:
         Data:
           type: object
           properties:
             FilePaymentId:
               type: string
-            TotalItems:
+            Status:
+              type: string
+              enum: [Processing, Validated, Rejected, Stopped]
+            TotalCount:
               type: integer
-            AcceptedItems:
+            AcceptedCount:
               type: integer
-            RejectedItems:
+            RejectedCount:
               type: integer
+            Items:
+              type: array
+              items:
+                $ref: '#/components/schemas/BulkReportItem'
+            GeneratedAt:
+              type: string
+              format: date-time
+        Links:
+          type: object
+          properties:
+            Self:
+              type: string
+    BulkReportItem:
+      type: object
+      properties:
+        LineNumber:
+          type: integer
+        InstructionId:
+          type: string
+        PayeeIban:
+          type: string
+        Amount:
+          type: string
+          pattern: '^[0-9]+(\.[0-9]+)?$'
+          description: Decimal string at the minor units of Currency (JPY 1500, AED 10.00, KWD 1.234), never rounded.
+        Currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        Status:
+          type: string
+        ErrorMessage:
+          type: string

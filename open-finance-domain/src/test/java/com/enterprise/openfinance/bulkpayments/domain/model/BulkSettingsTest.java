@@ -11,34 +11,36 @@ class BulkSettingsTest {
 
     @Test
     void shouldCreateValidSettings() {
-        BulkSettings settings = new BulkSettings(Duration.ofHours(24), Duration.ofSeconds(30), 10_000_000L, 2);
+        BulkSettings settings = new BulkSettings(Duration.ofSeconds(30), 10_000_000L, 2);
 
-        assertThat(settings.idempotencyTtl()).isEqualTo(Duration.ofHours(24));
         assertThat(settings.cacheTtl()).isEqualTo(Duration.ofSeconds(30));
         assertThat(settings.maxFileSizeBytes()).isEqualTo(10_000_000L);
-        assertThat(settings.statusPollsToComplete()).isEqualTo(2);
+        assertThat(settings.processingBatchSize()).isEqualTo(2);
+    }
+
+    @Test
+    void idempotencyKeysHaveNoTimeToLive() {
+        assertThat(BulkSettings.class.getRecordComponents())
+                .extracting(java.lang.reflect.RecordComponent::getName)
+                .containsExactly("cacheTtl", "maxFileSizeBytes", "processingBatchSize");
     }
 
     @Test
     void shouldRejectInvalidSettings() {
-        assertInvalid(null, Duration.ofSeconds(30), 10_000_000L, 2, "idempotencyTtl");
-        assertInvalid(Duration.ofHours(24), null, 10_000_000L, 2, "cacheTtl");
-        assertInvalid(Duration.ZERO, Duration.ofSeconds(30), 10_000_000L, 2, "idempotencyTtl");
-        assertInvalid(Duration.ofHours(24), Duration.ZERO, 10_000_000L, 2, "cacheTtl");
-        assertInvalid(Duration.ofHours(24), Duration.ofSeconds(30), 0L, 2, "maxFileSizeBytes");
-        assertInvalid(Duration.ofHours(24), Duration.ofSeconds(30), 10_000_000L, 0, "statusPollsToComplete");
+        assertInvalid(null, 10_000_000L, 2, "cacheTtl");
+        assertInvalid(Duration.ZERO, 10_000_000L, 2, "cacheTtl");
+        assertInvalid(Duration.ofSeconds(30), 0L, 2, "maxFileSizeBytes");
+        assertInvalid(Duration.ofSeconds(30), 10_000_000L, 0, "processingBatchSize");
     }
 
-    private static void assertInvalid(Duration idempotencyTtl,
-                                      Duration cacheTtl,
+    private static void assertInvalid(Duration cacheTtl,
                                       long maxFileSizeBytes,
-                                      int statusPollsToComplete,
+                                      int processingBatchSize,
                                       String expectedField) {
         assertThatThrownBy(() -> new BulkSettings(
-                idempotencyTtl,
                 cacheTtl,
                 maxFileSizeBytes,
-                statusPollsToComplete
+                processingBatchSize
         )).isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(expectedField);
     }

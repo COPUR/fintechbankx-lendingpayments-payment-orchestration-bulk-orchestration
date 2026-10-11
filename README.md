@@ -76,3 +76,67 @@ This repository participates in the FinTechBankX cell-based resilience program.
 - Plan: docs/architecture/CELL_BASED_ARCHITECTURE_IMPLEMENTATION_PLAN.md
 - Backlog: docs/project-management/CELL_ARCHITECTURE_BACKLOG_BOARD.md
 <!-- cell-architecture-end -->
+
+## Service metadata (naming standard)
+
+| Tag | Value |
+|---|---|
+| bounded_context | payment_bulk_orchestration (capability `bulkpayments`) |
+| owning_squad | Recurring and Bulk Payments Squad |
+| owning_tribe | Lending & Payments Tribe |
+| review_cadence | quarterly |
+| data_owner | Recurring and Bulk Payments Squad (schema `sc_pay_bulk_orchestration`) |
+| upstream_dependencies | svc-of-consent-authorization (consent reads: `GET /api/v1/consents/{id}`, client credentials, `usable` decides), Keycloak realm `fintechbankx`, Kafka (MSK or Strimzi) |
+| published_events | `evt.pay.bulk.v1`, one topic per aggregate (ADR-019), keyed by the file id, event named by the `eventType` record header: `Payments.BulkFile.Accepted.v1`, `Payments.BulkFile.Rejected.v1`, `Payments.BulkFile.Completed.v1` (contract only: not emitted until items are handed to initiation-settlement) |
+| consumed_events | none (producer only; no dead-letter topic of its own) |
+
+Runtime names: service id `svc-pay-bulk-orchestration`, `spring.application.name` `app.pay.bulk-orchestration`,
+Helm release, service account and image `payment-bulk-orchestration-service` in namespace `payments`,
+label `fintechbankx.io/app: app-pay-bulk-orchestration`, database `db_pay_bulk_orchestration_<env>`.
+
+## Scope cleanup (residue removed from the extraction seed)
+
+| Removed | Owner |
+|---|---|
+| Consent models, `ConsentController`, `DistributedConsentService`, Redis consent cache | fintechbankx-openfinance-consent-auth-service |
+| `OpenFinanceAccountController` and account data | fintechbankx-openfinance-retail-data-personal-financial / corporate-data-business-financial |
+| `OpenFinanceLoanController` | fintechbankx-lendingpayments-loan-lifecycle-core |
+| CBUAE participant directory adapter and port | fintechbankx-openfinance-payee-metadata-banking-metadata |
+| Analytics (Mongo), CQRS projections, `PostgreSQLEventStore`, monitoring | fintechbankx-platform-observability-sre-operations / platform event streaming |
+| Keycloak `FAPIAuthenticator`, PCI guard | fintechbankx-platform-identity-iam-keycloak-ldap / platform mesh security |
+| `application/saga` | payment initiation and settlement (svc-pay-initiation-settlement) |
+| `infra/terraform/bulk-payments-service` (pointed at a missing module path) | replaced by `deploy/terraform` |
+| In-memory file, report and idempotency adapters | replaced by Postgres adapters |
+
+## Run, test and deploy
+
+```bash
+./gradlew --no-daemon clean check            # unit + ArchUnit + coverage gate; Postgres ITs skip
+TEST_DB_URL=jdbc:postgresql://localhost:5432/<db> TEST_DB_USERNAME=<user> TEST_DB_PASSWORD=<pw> \
+  ./gradlew --no-daemon clean check          # also runs the Postgres ITs (CI=true without a DB fails)
+```
+
+Local boot without Kafka: set `DB_URL`, `DB_USERNAME`, `SPRING_DATASOURCE_PASSWORD`,
+`CONSENT_ADAPTER=in-memory` and keep `OUTBOX_RELAY_ENABLED=false` (and `DPOP_REQUIRED=false` to call it with plain Bearer tokens), then
+`java -jar open-finance-bootstrap/build/libs/payment-bulk-orchestration-service.jar`
+(API on 8080, management on 8081). The schema `sc_pay_bulk_orchestration` must exist (Flyway does not create
+it); single-user, Flyway runs in-process as that user and V11 only logs that privileges are not separated.
+
+Database roles: the pods connect as the DML-only runtime role (`DB_USERNAME`, secret `db-app`) with
+`SPRING_FLYWAY_ENABLED=false`; migrations run as the schema owner in a Helm pre-install/pre-upgrade Job
+(`java -jar ... migrate`, secret `db-migration`). See the runbook, section 2.
+
+Deployed, the pods verify Aurora's certificate: `DB_URL` must carry
+`sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem` (Terraform output
+`jdbc_url`), and the chart mounts the platform ConfigMap `rds-ca-bundle` there. Local
+runs and tests keep their own URLs.
+
+- Security: TPP-facing API, so DPoP is enforced (`Authorization: DPoP`, verified proof with a single-use jti, proof key = token `cnf.jkt`, `aud` = `svc-pay-bulk-orchestration`). Set `DPOP_REQUIRED=false` only for local runs with plain tokens.
+- Endpoints: `POST /open-finance/v1/file-payments`, `GET /open-finance/v1/file-payments/{fileId}`, `GET /open-finance/v1/file-payments/{fileId}/report` ([OpenAPI](./api/openapi/bulk-orchestration-service.yaml))
+- Money: the upload carries a required ISO 4217 `Currency` (the CSV `instruction_id,payee_iban,amount` has none). Amounts are kept and published at the currency's minor units and never rounded; a finer amount is 400.
+- Events contract: [AsyncAPI](./api/asyncapi/svc-pay-bulk-orchestration.yaml)
+- Event contract gate (ADR-019 section 5): `npm install --no-save yaml@2.9.1 && ASYNCAPI_DIR=api/asyncapi BASE_REF=origin/main ./scripts/ci/asyncapi-breaking.sh`, plus `npx -y @asyncapi/cli@2.13.0 validate api/asyncapi/svc-pay-bulk-orchestration.yaml`; both run in `ci/test`. `scripts/ci/asyncapi-breaking.mjs` (sha256 `de255737fe6b54ffbadce8e030e18eec48d0137e0abd43c790fe201a10015eb1`), `scripts/ci/asyncapi-breaking.sh` (sha256 `5b39d588673c5f7ab55fcfa548fffd70b96ab9b11ea82bd2b61468dadb430c77`) and `scripts/ci/lib/asyncapi-model.mjs` (sha256 `212df6ca092e1ed5519664d7848c9de5fdb5d137f34faa3d31a25e3fe29b3847`) are copies of the AsyncAPI catalog's files at commit 44837cc; `ci/test` fails when `sha256sum` of a copy differs (step "AsyncAPI gate scripts match the catalog copy"). Do not edit them: copy again and update the commit and the sums here and in the workflow. `api/asyncapi/common/event-envelope.yaml` is the catalog's file at the same commit. An accepted-breaking file would sit next to the spec in `api/asyncapi/`. The spec is pre-release (not on `main` yet), stays at 1.0.0 and has no waiver
+- Deployment: [Helm chart](./deploy/helm/payment-bulk-orchestration-service), [Terraform](./deploy/terraform), [deployment notes](./docs/architecture/DEPLOYMENT_AND_WELL_ARCHITECTED.md)
+- Chart values guard (guardrail 4a): `deploy/helm/payment-bulk-orchestration-service/templates/_fbx_helpers.tpl` (sha256 `8ba2e4a11ead019c25bf0a01e4fe4bbabb6fef0e1980e5fa828ccb9f5673f8ba`) is a byte-identical copy of the platform chart's helpers, cicd-templates `charts/fintechbankx-service/templates/_helpers.tpl` at commit 6b6c317 (source repository COPUR/fintechbankx-platform-delivery-iac-cicd-templates, path `charts/fintechbankx-service/templates/_helpers.tpl`; its README, "Vendoring the guard"); `deploy/helm` runs `scripts/ci/verify-vendored-guard.sh` (a byte copy of the platform script at the same commit) with that digest (step "Vendored guard matches the platform copy"): it fails when the file differs, when another template redefines an `fbx.*` helper, or when a workload template does not call the guard first. Do not edit it: copy the newer platform file again and update the commit and the sum here and in the workflow. `fbx.guard` is called once at the top of the Deployment and of the migration Job through an adapter dict (`templates/_helpers.tpl`, `bulk.guard`) that maps this chart's values onto the guard's routes (config, rdsCaBundle as databaseCa including `configMapName`, which the guard pins to `rds-ca-bundle`, kafkaStrimzi.enabled as kafka.runtime msk/strimzi, the service ExternalSecret's fixed keys; no extraEnv, envFrom or dataFrom exist). Rules this chart keeps on top (`bulk.guardEnv`): no `spring.kafka.properties.*` or `spring.kafka.<client>.properties.*` name (the guard refuses the `ssl.*` ones and the Kafka client TLS names itself, and `spring.data.mongodb.*`), no non-scalar config value, `kafkaStrimzi.enabled` must be a boolean. `SPRING_PROFILES_ACTIVE` is rendered through `fbx.kafkaProfile` (kafka-msk or kafka-strimzi) and `KAFKA_SECURITY_PROTOCOL` (SASL_SSL or SSL) from that boolean, so the `local` profile (the only packaged configuration that switches the startup TLS assertion off) cannot be activated through the chart. Every key and value the templates interpolate is quoted (numbers rendered with `int`)
+- Migration: [runbook](./docs/migration/RUNBOOK-EXTRACT-pay-bulk-orchestration.md) (no backfill; catalog PR pending), [regression mapping](./docs/migration/REGRESSION_MAPPING.md)
+- Mesh: the chart ships no Istio policy. The mesh owners must ALLOW `cluster.local/ns/istio-ingress/sa/istio-ingressgateway` to this service, and `cluster.local/ns/payments/sa/payment-bulk-orchestration-service` to the consent service.

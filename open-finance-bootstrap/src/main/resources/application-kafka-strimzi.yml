@@ -1,0 +1,12 @@
+# In-cluster Strimzi Kafka (SPRING_PROFILES_ACTIVE=kafka-strimzi): mutual TLS with the
+# KafkaUser certificate as PEM, mapped from Secret kafka-client-tls by the Helm chart.
+spring:
+  kafka:
+    security:
+      protocol: SSL
+    ssl:
+      key-store-type: PEM
+      trust-store-type: PEM
+      key-store-certificate-chain: ${KAFKA_TLS_CERT}
+      key-store-key: ${KAFKA_TLS_KEY}
+      trust-store-certificates: ${KAFKA_TLS_CA}

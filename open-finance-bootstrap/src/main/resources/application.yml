@@ -1,0 +1,193 @@
+# svc-pay-bulk-orchestration runtime configuration.
+# Every environment-specific value comes from the environment (Helm values,
+# Kubernetes Secret synced from AWS Secrets Manager); nothing secret is here.
+spring:
+  application:
+    name: app.pay.bulk-orchestration
+  threads:
+    virtual:
+      enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
+  servlet:
+    multipart:
+      enabled: false
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/db_pay_bulk_orchestration_local}
+    username: ${DB_USERNAME:payment_bulk_app}
+    # The credential is bound from SPRING_DATASOURCE_PASSWORD (Kubernetes Secret
+    # synced from AWS Secrets Manager); it is never written in this file.
+    hikari:
+      schema: sc_pay_bulk_orchestration
+      maximum-pool-size: ${DB_POOL_MAX:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      connection-timeout: 3000
+      max-lifetime: 1200000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: sc_pay_bulk_orchestration
+        jdbc:
+          time_zone: UTC
+          batch_size: 50
+        order_inserts: true
+        order_updates: true
+  flyway:
+    # Platform contract "Database roles": migrations run as the schema owner in
+    # the Helm pre-install/pre-upgrade Job "migrate" (SPRING_FLYWAY_USER and
+    # SPRING_FLYWAY_PASSWORD from <env>/payment-bulk-orchestration-service/db-migration);
+    # the pods get only the runtime role (DB_USERNAME, secret db-app) and run with
+    # SPRING_FLYWAY_ENABLED=false. V11 grants the runtime role its DML. Without
+    # owner credentials (local runs) Flyway uses the app credentials.
+    placeholders:
+      runtime_role: ${spring.datasource.username}
+    schemas: sc_pay_bulk_orchestration
+    default-schema: sc_pay_bulk_orchestration
+    # The DBA bootstrap creates the schema, owned by the schema owner (runbook section 2).
+    create-schemas: false
+    locations: classpath:db/migration
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    security:
+      protocol: ${KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+    admin:
+      # Topics exist only through the platform catalog; this service never creates them.
+      auto-create: false
+    producer:
+      client-id: svc-pay-bulk-orchestration
+      compression-type: lz4
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        linger.ms: 5
+        max.in.flight.requests.per.connection: 5
+        # Kafka requires delivery.timeout.ms >= linger.ms + request.timeout.ms (KafkaProducerConfigValidityTest).
+        request.timeout.ms: 20000
+        delivery.timeout.ms: 30000
+        # send() itself may block (metadata, full buffer) before the relay's wait starts; keep it
+        # below the relay send-timeout (KafkaProducerConfigValidityTest). Kafka's default is 60 s.
+        max.block.ms: 10000
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8180/realms/fintechbankx}
+          jwk-set-uri: ${OIDC_JWK_SET_URI:http://localhost:8180/realms/fintechbankx/protocol/openid-connect/certs}
+      # Outbound calls (consent service) use this service's own
+      # client-credentials token, never the caller's token.
+      client:
+        registration:
+          consent-service:
+            provider: fintechbankx
+            client-id: ${SERVICE_CLIENT_ID:svc-pay-bulk-orchestration}
+            client-secret: ${SERVICE_CLIENT_SECRET:}
+            authorization-grant-type: client_credentials
+            client-authentication-method: client_secret_basic
+        provider:
+          fintechbankx:
+            token-uri: ${OIDC_TOKEN_URI:http://localhost:8180/realms/fintechbankx/protocol/openid-connect/token}
+
+server:
+  port: 8080
+  shutdown: graceful
+  forward-headers-strategy: framework
+  tomcat:
+    # Upload bodies carry the file inline (JSON); keep a margin over max-file-size-bytes.
+    max-swallow-size: 16MB
+    max-http-form-post-size: 16MB
+
+management:
+  server:
+    port: 8081
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+        liveness:
+          include: livenessState
+  metrics:
+    # Common tags (platform convention): service id, app = service account, squad = namespace.
+    # The chart's ConfigMap sets METRICS_TAG_APP and METRICS_TAG_SQUAD; the platform outbox alerts route on squad.
+    tags:
+      service: svc-pay-bulk-orchestration
+      app: ${METRICS_TAG_APP:payment-bulk-orchestration-service}
+      squad: ${METRICS_TAG_SQUAD:payments}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  observations:
+    key-values:
+      service: svc-pay-bulk-orchestration
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:0.1}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://otel-collector.observability.svc.cluster.local:4318/v1/traces}
+
+fintechbankx:
+  tls:
+    # Startup assertion (governance round 3, item 2, hardened in round 6; TlsEnforcementInitializer): the
+    # service refuses to start unless every datasource URL a pool can use (spring.datasource.url,
+    # spring.datasource.hikari.jdbc-url, spring.flyway.url) carries exactly one lower-case sslmode=verify-full,
+    # read as PgJDBC reads it, with none of sslfactory/sslfactoryarg/sslhostnameverifier/sslpasswordcallback/
+    # service, and, when a Kafka client is configured, the producer's effective security.protocol
+    # (spring.kafka.properties and spring.kafka.producer.properties included) is SASL_SSL (or SSL, the
+    # Strimzi mutual-TLS profile). No environment placeholder on purpose: the chart cannot set it, name a
+    # profile or override these settings (its values guard refuses every such name). Only
+    # application-local.yml and test configuration set it false.
+    enforce: true
+
+openfinance:
+  bulkpayments:
+    security:
+      # Access tokens must carry this service id in aud.
+      audience: ${OIDC_AUDIENCE:svc-pay-bulk-orchestration}
+      # TPP-facing API: DPoP scheme, verified proof (jti replay guard in dpop_proof_jti) and cnf.jkt match.
+      dpop:
+        required: ${DPOP_REQUIRED:true}
+        max-proof-age: PT5M
+        allowed-future-skew: PT1M
+    consent:
+      # http: consent service (default, fails closed). in-memory: seeded consents for local runs only.
+      adapter: ${CONSENT_ADAPTER:http}
+      base-url: ${CONSENT_SERVICE_BASE_URL:http://consent-authorization-service.open-finance.svc.cluster.local:8080}
+      client-registration-id: consent-service
+      connect-timeout: PT1S
+      read-timeout: PT2S
+    cache:
+      ttl: PT30S
+      max-entries: 10000
+    processing:
+      enabled: ${BULK_PROCESSING_ENABLED:true}
+      max-file-size-bytes: 10000000
+      batch-size: ${BULK_PROCESSING_BATCH_SIZE:500}
+      max-batches-per-run: 20
+      interval: PT1S
+    outbox:
+      retention: P7D
+      relay:
+        # Off until the evt.pay.bulk.v1 topic exists (runbook step 4); events wait in the outbox.
+        enabled: ${OUTBOX_RELAY_ENABLED:false}
+        interval: PT1S
+        batch-size: 100
+        # ADR-021 decision 4: only payload errors park a row; every other failure stops the batch
+        # without marking anything and backs off. Alert on outbox_oldest_pending_age_seconds.
+        # Longer than delivery.timeout.ms, so the relay never gives up on a send the producer still retries.
+        send-timeout: PT35S
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name},%X{traceId:-},%X{spanId:-},%X{correlationId:-}]"

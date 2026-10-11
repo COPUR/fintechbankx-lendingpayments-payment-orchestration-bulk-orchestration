@@ -1,0 +1,4 @@
+# Startup TLS assertion (governance round 3, item 2): runs in every SpringApplication of this module,
+# the service, the "migrate" Job and @SpringBootTest alike, before any bean or connection.
+org.springframework.context.ApplicationContextInitializer=\
+com.enterprise.openfinance.bulkpayments.startup.TlsEnforcementInitializer

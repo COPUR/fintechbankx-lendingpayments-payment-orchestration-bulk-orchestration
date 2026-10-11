@@ -1,0 +1,177 @@
+# Defaults are production-shaped (multi-replica, spread across zones).
+# Override per environment with values-<env>.yaml. Install into namespace
+# "payments" (platform contract); the service account name is the Helm name.
+
+image:
+  repository: ""   # e.g. <account>.dkr.ecr.<region>.amazonaws.com/fintechbankx/payment-bulk-orchestration-service
+  tag: ""          # immutable tag (git SHA); never "latest"
+  pullPolicy: IfNotPresent
+
+replicaCount: 3
+
+serviceAccount:
+  name: payment-bulk-orchestration-service
+  # IAM role from deploy/terraform output workload_role_arn (IRSA).
+  roleArn: ""
+
+podLabels:
+  app.kubernetes.io/part-of: fintechbankx-payments
+  fintechbankx.io/service-id: svc-pay-bulk-orchestration
+  # Naming-standard app label (app-<ctx>-<cap>); plain "app" is reserved for the SA name.
+  fintechbankx.io/app: app-pay-bulk-orchestration
+  sidecar.istio.io/inject: "true"
+
+service:
+  port: 8080
+  managementPort: 8081
+
+# Memory request = limit: the JVM sizes its heap from the limit (MaxRAMPercentage=75).
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    memory: 1Gi
+
+# CPU only: JVM memory does not shrink with load, so it is no scaling signal.
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 12
+  targetCPUUtilizationPercentage: 65
+
+podDisruptionBudget:
+  minAvailable: 2
+
+# Non-secret runtime settings, rendered into a ConfigMap (every key and value
+# quoted). Values marked "required" fail the render when empty. The vendored
+# platform guard (templates/_fbx_helpers.tpl, fbx.guard; README "Chart values
+# guard") checks every key and value: DB_URL is parsed as PgJDBC parses it;
+# names that could override the datasource, redirect Spring's configuration
+# (spring.config.*), name a profile (spring.profiles.*), replace a trust anchor
+# (spring.ssl.*, *ssl.bundle*, *sslmode*, *sslrootcert*, DB_SSL_ROOT_CERT) or
+# switch the startup TLS assertion off (fintechbankx.tls.*) fail the render in
+# any spelling Spring's relaxed binding accepts; *security.protocol values must
+# be SASL_SSL (kafkaStrimzi.enabled false) or SSL (true); JVM option values
+# (JAVA_TOOL_OPTIONS, JDK_JAVA_OPTIONS, _JAVA_OPTIONS) may not carry such
+# settings, '$(' or '${', nor read options from a file. This chart adds
+# (templates/_helpers.tpl, bulk.guardEnv): no spring.kafka.properties.* /
+# spring.kafka.ssl.* / spring.kafka.<client>.properties.* names, and no
+# non-scalar value. The chart renders SPRING_PROFILES_ACTIVE and
+# KAFKA_SECURITY_PROTOCOL itself from kafkaStrimzi.enabled (templates/deployment.yaml).
+config:
+  # required (deploy/terraform output jdbc_url). Must verify the server
+  # certificate against the mounted RDS CA bundle (rdsCaBundle below), e.g.
+  # jdbc:postgresql://<aurora-writer>:5432/db_pay_bulk_orchestration_<env>?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem
+  # The URL is parsed as PgJDBC parses it (templates/_fbx_helpers.tpl, fbx.validateJdbcUrl):
+  # exactly one lower-case sslmode=verify-full, exactly one sslrootcert equal to the
+  # mounted bundle, no sslfactory/sslfactoryarg/sslhostnameverifier/sslpasswordcallback/
+  # service, no percent-encoded '=' or '&', no '${' or '$(', no TLS key before the '?'.
+  # Any other config value that is a PostgreSQL JDBC URL is held to the same rule.
+  DB_URL: ""
+  # Runtime role (DML only, granted by V11); its password comes from the
+  # db-app secret. The schema owner is used only by the migration Job.
+  DB_USERNAME: payment_bulk_app
+  DB_POOL_MAX: "10"
+  # required: MSK bootstrap_brokers_sasl_iam (port 9098), or the Strimzi bootstrap (9093) with kafkaStrimzi.enabled.
+  # The Kafka profile (kafka-msk or kafka-strimzi) and KAFKA_SECURITY_PROTOCOL (SASL_SSL or SSL) are not
+  # values: the Deployment renders them from kafkaStrimzi.enabled.
+  KAFKA_BOOTSTRAP_SERVERS: ""
+  OIDC_ISSUER_URI: ""             # required: https://<identity-host>/realms/fintechbankx
+  OIDC_JWK_SET_URI: ""            # required: <issuer>/protocol/openid-connect/certs
+  OIDC_TOKEN_URI: ""              # required: client-credentials token endpoint for service-to-service calls
+  OIDC_AUDIENCE: svc-pay-bulk-orchestration
+  # TPP-facing API: keep "true" (platform contract, DPoP applies by caller).
+  DPOP_REQUIRED: "true"
+  SERVICE_CLIENT_ID: svc-pay-bulk-orchestration
+  CONSENT_ADAPTER: http
+  CONSENT_SERVICE_BASE_URL: http://consent-authorization-service.open-finance.svc.cluster.local:8080
+  BULK_PROCESSING_ENABLED: "true"
+  BULK_PROCESSING_BATCH_SIZE: "500"
+  # Off until the evt.pay.bulk.v1 topic is in the platform catalog and created (runbook step 4).
+  OUTBOX_RELAY_ENABLED: "false"
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://otel-collector.observability.svc.cluster.local:4318/v1/traces
+
+# Flyway migration step: a Helm pre-install/pre-upgrade Job running the image
+# with "migrate" as the schema owner. Only this Job gets the owner credential;
+# the pods run with SPRING_FLYWAY_ENABLED=false.
+migration:
+  enabled: true
+  # required: <env>/payment-bulk-orchestration-service/db-migration
+  # ({"username","password"} of the schema owner; deploy/terraform output
+  # migration_db_secret_name).
+  remoteSecretName: ""
+  # A classic (non-native) Istio sidecar keeps the Job from completing, so
+  # the Job runs outside the mesh by default; it only talks to Aurora (TLS
+  # verify-full). Set true once the cluster runs Istio native sidecars.
+  # The Job runs as its own hook ServiceAccount, named like the Job
+  # (templates/migration-job.yaml), never the chart's: before flipping this,
+  # the mesh must admit that hook account's identity for Aurora egress.
+  istioSidecar: false
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 512Mi
+
+# Amazon RDS CA bundle (platform contract "Database CA bundle"): ConfigMap
+# rds-ca-bundle, key global-bundle.pem, published by trust-manager into every
+# service namespace. Mounted read-only so DB_URL can use sslmode=verify-full
+# with sslrootcert=<mountPath>/global-bundle.pem. The chart ships no copy.
+# Mount path and the DB_SSL_ROOT_CERT export follow the shared chart
+# fintechbankx-service (cicd-templates 4f0f266, databaseCa).
+rdsCaBundle:
+  configMapName: rds-ca-bundle
+  key: global-bundle.pem
+  mountPath: /etc/fintechbankx/rds-ca
+
+# Credentials, synced from AWS Secrets Manager by External Secrets Operator.
+externalSecret:
+  enabled: true
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: aws-secrets-manager
+  # Keys must be <env>/payment-bulk-orchestration-service/<name> (platform
+  # admission policy; the chart refuses anything else at render time).
+  # <env>/payment-bulk-orchestration-service/db-app (runtime role password,
+  # deploy/terraform output app_db_secret_name).
+  remoteSecretName: ""
+  # This service's Keycloak client secret: <env>/payment-bulk-orchestration-service/oidc-client, property client_secret.
+  serviceClientSecretName: ""
+  refreshInterval: 1h
+
+# In-cluster Strimzi Kafka instead of MSK: mutual TLS with the KafkaUser
+# certificate from Secret kafka-client-tls (keys user.crt, user.key, ca.crt).
+# This boolean is the only profile switch: false renders SPRING_PROFILES_ACTIVE=kafka-msk
+# and KAFKA_SECURITY_PROTOCOL=SASL_SSL, true renders kafka-strimzi and SSL (both
+# profiles are packaged in the image; neither switches the TLS assertion off).
+kafkaStrimzi:
+  enabled: false
+  tlsSecretName: kafka-client-tls
+
+# Owning squad, rendered as the common label fintechbankx.io/squad on every
+# object (platform review round 2).
+squad: payments
+
+# Metrics: the observability repo's PodMonitor fintechbankx-services is the
+# single scrape path (pod label fintechbankx.io/service-id plus the
+# prometheus.io annotations). This chart ships no ServiceMonitor (cicd-templates
+# 0f86859).
+
+# NetworkPolicy belongs to the mesh repo (platform review round 2, cicd-templates
+# 1dd1138), so the chart renders none by default. Opt-in only for a cluster the
+# mesh repo does not cover yet; it admits namespaces only, never a CIDR, and lets
+# observability reach 15020 (Istio merged metrics) and the management port.
+networkPolicy:
+  enabled: false
+  # Namespaces whose pods may call the API on 8080 (besides the ingress gateway).
+  # TPPs reach the API through the ingress gateway only.
+  allowedNamespaces: []
+  ingressNamespace: istio-ingress
+  monitoringNamespace: observability
+
+topologySpread:
+  maxSkew: 1

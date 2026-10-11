@@ -1,14 +1,15 @@
 package com.enterprise.openfinance.bulkpayments.domain.model;
 
-import java.time.Instant;
-
+/**
+ * An upload's idempotency key, per TPP. Permanent: a key never expires and is
+ * never reusable; it answers with its original file for good.
+ */
 public record BulkIdempotencyRecord(
         String idempotencyKey,
         String tppId,
         String requestHash,
         String fileId,
-        BulkFileStatus status,
-        Instant expiresAt
+        BulkFileStatus status
 ) {
 
     public BulkIdempotencyRecord {
@@ -27,18 +28,11 @@ public record BulkIdempotencyRecord(
         if (status == null) {
             throw new IllegalArgumentException("status is required");
         }
-        if (expiresAt == null) {
-            throw new IllegalArgumentException("expiresAt is required");
-        }
 
         idempotencyKey = idempotencyKey.trim();
         tppId = tppId.trim();
         requestHash = requestHash.trim();
         fileId = fileId.trim();
-    }
-
-    public boolean isActive(Instant now) {
-        return expiresAt.isAfter(now);
     }
 
     private static boolean isBlank(String value) {

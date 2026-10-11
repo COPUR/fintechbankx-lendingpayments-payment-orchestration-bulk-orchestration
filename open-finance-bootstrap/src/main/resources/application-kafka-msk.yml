@@ -1,0 +1,11 @@
+# Amazon MSK (AWS runtime; Helm sets SPRING_PROFILES_ACTIVE=kafka-msk): IAM client
+# auth through the pod's IRSA role, per the platform Kafka client guide
+# (fintechbankx-platform-event-streaming-kafka docs/guides/SERVICE_CLIENT_CONFIGURATION.md).
+spring:
+  kafka:
+    security:
+      protocol: SASL_SSL
+    properties:
+      sasl.mechanism: AWS_MSK_IAM
+      sasl.jaas.config: software.amazon.msk.auth.iam.IAMLoginModule required;
+      sasl.client.callback.handler.class: software.amazon.msk.auth.iam.IAMClientCallbackHandler

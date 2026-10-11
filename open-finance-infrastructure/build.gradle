@@ -3,22 +3,7 @@ plugins {
     id 'jacoco'
 }
 
-description = 'Bulk payments infrastructure adapters'
-
-sourceSets {
-    main {
-        java {
-            setSrcDirs(['src/main/java'])
-            include 'com/enterprise/openfinance/bulkpayments/**'
-        }
-    }
-    test {
-        java {
-            setSrcDirs(['src/test/java'])
-            include 'com/enterprise/openfinance/bulkpayments/**'
-        }
-    }
-}
+description = 'Bulk payments infrastructure adapters: REST, PostgreSQL, outbox, consent client'
 
 dependencies {
     implementation project(':open-finance-domain')
@@ -26,13 +11,34 @@ dependencies {
 
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
-    implementation 'org.springframework.boot:spring-boot-starter'
+
+    // Own schema sc_pay_bulk_orchestration; Flyway migrations in src/main/resources/db/migration
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    implementation 'org.postgresql:postgresql'
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+
+    // Inbound JWT validation and outbound client-credentials tokens
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'
+
+    // Outbox relay and metrics
+    implementation 'org.springframework.kafka:spring-kafka'
+    implementation 'io.micrometer:micrometer-core'
+    // Amazon MSK IAM client auth, used by the kafka-msk profile.
+    runtimeOnly 'software.amazon.msk:aws-msk-iam-auth:2.2.0'
     implementation 'com.fasterxml.jackson.core:jackson-databind'
 
+    testImplementation 'com.tngtech.archunit:archunit-junit5:1.4.1'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'org.assertj:assertj-core'
     testImplementation 'org.mockito:mockito-core'
+    // Proves the outbox meters coexist under their Prometheus names (OutboxMetricsPrometheusTest).
+    testImplementation 'io.micrometer:micrometer-registry-prometheus'
 }
 
 jacoco {

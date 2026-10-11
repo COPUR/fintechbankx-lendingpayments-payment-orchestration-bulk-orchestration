@@ -42,6 +42,7 @@ public record BulkFileReportResponse(
             @JsonProperty("InstructionId") String instructionId,
             @JsonProperty("PayeeIban") String payeeIban,
             @JsonProperty("Amount") String amount,
+            @JsonProperty("Currency") String currency,
             @JsonProperty("Status") String status,
             @JsonProperty("ErrorMessage") String errorMessage
     ) {
@@ -50,7 +51,8 @@ public record BulkFileReportResponse(
                     item.lineNumber(),
                     item.instructionId(),
                     item.payeeIban(),
-                    item.amount().setScale(2, java.math.RoundingMode.HALF_UP).toPlainString(),
+                    item.amount().toPlainString(),
+                    item.amount().currency().getCurrencyCode(),
                     item.status().apiValue(),
                     item.errorMessage()
             );

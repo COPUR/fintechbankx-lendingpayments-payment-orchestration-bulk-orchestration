@@ -1,0 +1,20 @@
+{{- $required := list "DB_URL" "KAFKA_BOOTSTRAP_SERVERS" "OIDC_ISSUER_URI" "OIDC_JWK_SET_URI" "OIDC_TOKEN_URI" "OIDC_AUDIENCE" "CONSENT_SERVICE_BASE_URL" -}}
+{{- range $key := $required }}
+{{- if not (index $.Values.config $key) }}
+{{- fail (printf "config.%s is required" $key) }}
+{{- end }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "bulk.name" . }}
+  labels:
+    {{- include "bulk.labels" . | nindent 4 }}
+data:
+  {{- /* Every key and value quoted: a value cannot close its line and add a key (the guard, fbx.guard, runs from the Deployment and the Job). */}}
+  {{- range $key, $value := .Values.config }}
+  {{ $key | quote }}: {{ $value | quote }}
+  {{- end }}
+  # Micrometer common tags (platform convention): app = service account, squad = namespace.
+  METRICS_TAG_APP: {{ .Values.serviceAccount.name | quote }}
+  METRICS_TAG_SQUAD: {{ .Release.Namespace | quote }}
