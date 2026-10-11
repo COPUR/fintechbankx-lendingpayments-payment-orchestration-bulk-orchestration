@@ -370,6 +370,43 @@ jobs:
           print("migration credential pinned: Job-only, keys", sorted(wanted))
           PY
 
+      - name: Image is one scalar
+        # Round-8 review: an image value cannot append container fields (command, args) the guard never saw.
+        run: |
+          chart=deploy/helm/payment-bulk-orchestration-service
+          args="--set image.repository=ci/payment-bulk-orchestration-service --set image.tag=${{ github.sha }}"
+          args="$args --set externalSecret.remoteSecretName=dev/payment-bulk-orchestration-service/db-app"
+          args="$args --set externalSecret.serviceClientSecretName=dev/payment-bulk-orchestration-service/oidc-client"
+          args="$args --set migration.remoteSecretName=dev/payment-bulk-orchestration-service/db-migration"
+          args="$args --set-string config.DB_URL=jdbc:postgresql://ci-db:5432/db_pay_bulk_orchestration_ci?sslmode=verify-full&sslrootcert=/etc/fintechbankx/rds-ca/global-bundle.pem"
+          args="$args --set config.KAFKA_BOOTSTRAP_SERVERS=ci-kafka:9098"
+          args="$args --set config.OIDC_ISSUER_URI=https://ci-idp/realms/fintechbankx"
+          args="$args --set config.OIDC_JWK_SET_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/certs"
+          args="$args --set config.OIDC_TOKEN_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/token"
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
+          tmp="$(mktemp -d)"
+          # --set-file applies after the --set in $args.
+          printf 'ci/bulk"\n          command: ["sh"]\n          args: ["-c", "x"]\n          x: "y' > "$tmp/image.txt"
+          helm template ci "$chart" --namespace payments $args --set-file "image.repository=$tmp/image.txt" > "$tmp/r.yaml"
+          python3 - "$tmp/r.yaml" <<'PY'
+          import sys, yaml
+          docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+          seen = set()
+          for d in docs:
+              if d["kind"] not in ("Deployment", "Job"):
+                  continue
+              seen.add(d["kind"])
+              for c in d["spec"]["template"]["spec"]["containers"]:
+                  assert isinstance(c["image"], str) and c["image"].startswith('ci/bulk"\n'), c["image"]
+                  assert "command" not in c, c.get("command")
+                  if d["kind"] == "Deployment":
+                      assert "args" not in c, c.get("args")
+                  else:
+                      assert c["args"] == ["migrate"], c["args"]
+          assert seen == {"Deployment", "Job"}, seen
+          print("image: one scalar, no command or args added")
+          PY
+
       - name: DB connection alarm budget matches the chart
         # deploy/terraform sizes the Aurora connection alarm from (service_max_replicas + service_max_surge) x
         # db_pool_max + headroom; those must be the chart's HPA maxReplicas, Deployment maxSurge and DB_POOL_MAX

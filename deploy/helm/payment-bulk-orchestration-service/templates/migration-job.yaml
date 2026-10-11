@@ -85,7 +85,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: db-migration
-          image: "{{ required "image.repository is required" .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
+          image: {{ printf "%s:%s" (required "image.repository is required" .Values.image.repository) (required "image.tag is required" .Values.image.tag) | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
           args: ["migrate"]
           env:
