@@ -61,7 +61,7 @@ jobs:
           args="$args --set config.OIDC_JWK_SET_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/certs"
           args="$args --set config.OIDC_TOKEN_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/token"
           args="$args --set config.ACCOUNTS_SERVICE_BASE_URL=http://ci-accounts:8080"
-          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
+          . scripts/ci/pyyaml-venv.sh
           rendered_file="$(mktemp)"
           helm template ci "$chart" --namespace payments $args > "$rendered_file"
           python3 - "$rendered_file" <<'PY'
@@ -113,7 +113,7 @@ jobs:
           args="$args --set config.OIDC_JWK_SET_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/certs"
           args="$args --set config.OIDC_TOKEN_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/token"
           args="$args --set config.ACCOUNTS_SERVICE_BASE_URL=http://ci-accounts:8080"
-          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
+          . scripts/ci/pyyaml-venv.sh
           tmp="$(mktemp -d)"
           # --set-file applies after the --set in $args.
           printf 'ci/bulk"\n          command: ["sh"]\n          args: ["-c", "x"]\n          x: "y' > "$tmp/image.txt"
@@ -138,7 +138,7 @@ jobs:
           PY
           # Platform round 7: the migration Job runs as its own hook ServiceAccount (no token, no IAM
           # role), created before the Job, never the chart's account or the namespace default.
-          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
+          . scripts/ci/pyyaml-venv.sh
           helm template ci "$chart" --namespace payments $args | python3 -c '
           import sys, yaml
           docs = [d for d in yaml.safe_load_all(sys.stdin) if d]
@@ -172,7 +172,7 @@ jobs:
           args="$args --set config.OIDC_JWK_SET_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/certs"
           args="$args --set config.OIDC_TOKEN_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/token"
           args="$args --set config.ACCOUNTS_SERVICE_BASE_URL=http://ci-accounts:8080"
-          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
+          . scripts/ci/pyyaml-venv.sh
           helm template ci "$chart" --namespace payments $args \
             | python3 scripts/ci/db-connection-budget-check.py "$tf"
           helm template ci "$chart" --namespace payments -f "$chart/values-dev.yaml" $args \
