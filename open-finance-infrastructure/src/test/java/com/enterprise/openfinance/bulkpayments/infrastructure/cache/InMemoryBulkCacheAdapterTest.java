@@ -22,7 +22,7 @@ class InMemoryBulkCacheAdapterTest {
 
         BulkFileReport report = new BulkFileReport(
                 "FILE-1",
-                BulkFileStatus.COMPLETED,
+                BulkFileStatus.VALIDATED,
                 1,
                 1,
                 0,
@@ -42,8 +42,8 @@ class InMemoryBulkCacheAdapterTest {
         properties.setMaxEntries(1);
         InMemoryBulkCacheAdapter adapter = new InMemoryBulkCacheAdapter(properties);
 
-        BulkFileReport report = new BulkFileReport("FILE-1", BulkFileStatus.COMPLETED, 1, 1, 0, List.of(), Instant.parse("2026-02-09T10:00:00Z"));
-        BulkFileReport report2 = new BulkFileReport("FILE-2", BulkFileStatus.COMPLETED, 1, 1, 0, List.of(), Instant.parse("2026-02-09T10:00:00Z"));
+        BulkFileReport report = new BulkFileReport("FILE-1", BulkFileStatus.VALIDATED, 1, 1, 0, List.of(), Instant.parse("2026-02-09T10:00:00Z"));
+        BulkFileReport report2 = new BulkFileReport("FILE-2", BulkFileStatus.VALIDATED, 1, 1, 0, List.of(), Instant.parse("2026-02-09T10:00:00Z"));
 
         adapter.putReport("k1", report, Instant.parse("2026-02-09T10:01:00Z"));
         adapter.putReport("k2", report2, Instant.parse("2026-02-09T10:01:00Z"));

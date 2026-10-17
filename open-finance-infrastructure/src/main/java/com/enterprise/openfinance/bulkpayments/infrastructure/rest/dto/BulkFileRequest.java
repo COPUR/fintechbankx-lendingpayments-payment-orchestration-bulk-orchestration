@@ -11,6 +11,7 @@ public record BulkFileRequest(
             @JsonProperty("FileName") String fileName,
             @JsonProperty("FileContent") String fileContent,
             @JsonProperty("FileHash") String fileHash,
+            @JsonProperty("Currency") String currency,
             @JsonProperty("IntegrityMode") String integrityMode
     ) {
     }

@@ -5,25 +5,11 @@ plugins {
 
 description = 'Bulk payments domain layer'
 
-sourceSets {
-    main {
-        java {
-            setSrcDirs(['src/main/java'])
-            include 'com/enterprise/openfinance/bulkpayments/**'
-        }
-    }
-    test {
-        java {
-            setSrcDirs(['src/test/java'])
-            include 'com/enterprise/openfinance/bulkpayments/**'
-        }
-    }
-}
-
 dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter'
     testImplementation 'org.assertj:assertj-core'
     testImplementation 'org.mockito:mockito-core'
+    testImplementation 'com.tngtech.archunit:archunit-junit5:1.4.1'
 }
 
 jacoco {

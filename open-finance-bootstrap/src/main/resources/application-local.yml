@@ -1,0 +1,7 @@
+# Local profile (SPRING_PROFILES_ACTIVE=local): a developer's PostgreSQL and Kafka without TLS.
+# Besides explicit test configuration, this is the only place that may switch the startup TLS
+# assertion off (TlsEnforcementInitializer). The Helm chart never sets this profile or
+# FINTECHBANKX_TLS_ENFORCE (its values guard bulk.guardEnv refuses the key).
+fintechbankx:
+  tls:
+    enforce: false

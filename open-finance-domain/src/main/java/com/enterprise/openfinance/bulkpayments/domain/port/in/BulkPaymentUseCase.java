@@ -1,11 +1,11 @@
 package com.enterprise.openfinance.bulkpayments.domain.port.in;
 
-import com.enterprise.openfinance.bulkpayments.domain.command.SubmitBulkFileCommand;
+import com.enterprise.openfinance.bulkpayments.domain.port.in.command.SubmitBulkFileCommand;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFile;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkFileReport;
 import com.enterprise.openfinance.bulkpayments.domain.model.BulkUploadResult;
-import com.enterprise.openfinance.bulkpayments.domain.query.GetBulkFileReportQuery;
-import com.enterprise.openfinance.bulkpayments.domain.query.GetBulkFileStatusQuery;
+import com.enterprise.openfinance.bulkpayments.domain.port.in.query.GetBulkFileReportQuery;
+import com.enterprise.openfinance.bulkpayments.domain.port.in.query.GetBulkFileStatusQuery;
 
 import java.util.Optional;
 
