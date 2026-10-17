@@ -180,6 +180,18 @@ class HttpJournalEntryAdapterTest {
     }
 
     @Test
+    void aCodeThatIsNotAPlainLedgerCodeFailsClosed() {
+        server.expect(requestTo(PATH)).andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"code\":\"available balance 12.50\",\"message\":\"ACC-DEBTOR\"}"));
+        assertThatThrownBy(() -> adapter.post(entry))
+                .isInstanceOf(AccountsLedgerUnavailableException.class)
+                .hasMessageContaining("422")
+                .hasMessageNotContaining("12.50")
+                .hasNoCause();
+    }
+
+    @Test
     void everyOtherStatusFailsClosedWithTheStatusOnly() {
         server.expect(requestTo(PATH)).andRespond(withServerError()
                 .contentType(MediaType.APPLICATION_JSON).body("{\"code\":\"INTERNAL\",\"message\":\"ACC-1 balance 7.00\"}"));

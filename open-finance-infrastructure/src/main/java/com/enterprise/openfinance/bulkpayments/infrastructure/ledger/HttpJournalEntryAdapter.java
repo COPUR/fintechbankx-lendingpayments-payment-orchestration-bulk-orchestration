@@ -24,6 +24,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.regex.Pattern;
 
 /**
  * Anti-corruption adapter to the accounts ledger (svc-acc-accounts-ledger),
@@ -38,6 +39,7 @@ public class HttpJournalEntryAdapter implements JournalEntryPort {
     static final String JOURNAL_ENTRIES_PATH = "/api/v1/journal-entries";
 
     private final RestClient client;
+    private static final Pattern LEDGER_CODE = Pattern.compile("[A-Z_]+");
     private final Supplier<String> serviceToken;
 
     public HttpJournalEntryAdapter(RestClient client, Supplier<String> serviceToken) {
@@ -85,10 +87,12 @@ public class HttpJournalEntryAdapter implements JournalEntryPort {
     }
 
     /** The ledger's error body is {code, message, interactionId, timestamp}; only the code is read. */
+    /** Only a plain ledger code (A-Z and underscore) is passed on; anything else is treated as no code. */
     private static String rejectionCode(HttpClientErrorException exception) {
         try {
             LedgerError error = exception.getResponseBodyAs(LedgerError.class);
-            return error == null || error.code() == null || error.code().isBlank() ? null : error.code();
+            return error == null || error.code() == null || !LEDGER_CODE.matcher(error.code()).matches()
+                    ? null : error.code();
         } catch (RuntimeException unreadable) {
             return null;
         }
