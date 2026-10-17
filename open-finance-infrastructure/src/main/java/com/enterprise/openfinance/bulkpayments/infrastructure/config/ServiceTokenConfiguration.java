@@ -15,8 +15,9 @@ import java.util.function.Supplier;
 
 /**
  * This service's own client-credentials token (Keycloak client svc-pay-bulk-orchestration)
- * for outbound calls: the consent service and the accounts ledger. The audiences a token
- * carries are the IdP's audience mappers for this client, not something chosen here.
+ * for outbound calls: the consent service and the accounts ledger. The scope a registration
+ * asks for decides the audiences its token carries: only the accounts-ledger registration asks
+ * for aud-svc-acc-accounts-ledger.
  * Present as soon as one HTTP adapter is configured.
  */
 @Configuration
