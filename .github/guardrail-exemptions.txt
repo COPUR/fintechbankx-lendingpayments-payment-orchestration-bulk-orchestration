@@ -1,4 +1,2 @@
 # Exemptions for the publication guardrails secret scan. One line per exemption:
 # file<TAB>exact line text<TAB>reason. A hit is dropped only when its file and whole line are listed.
-.github/workflows/required-gates.yml	          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}	GitHub secret reference (CI_DB_PASSWORD), not a literal; the reference scan does not accept a ${{ secrets.* }} value yet
-.github/workflows/required-gates.yml	      TEST_DB_PASSWORD: ${{ secrets.CI_DB_PASSWORD }}	GitHub secret reference (CI_DB_PASSWORD), not a literal; the reference scan does not accept a ${{ secrets.* }} value yet
