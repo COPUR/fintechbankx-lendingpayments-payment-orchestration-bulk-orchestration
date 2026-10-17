@@ -39,7 +39,7 @@ public class HttpJournalEntryAdapter implements JournalEntryPort {
     static final String JOURNAL_ENTRIES_PATH = "/api/v1/journal-entries";
 
     private final RestClient client;
-    private static final Pattern LEDGER_CODE = Pattern.compile("[A-Z_]+");
+    private static final Pattern LEDGER_CODE = Pattern.compile("[A-Z_]{1,64}");
     private final Supplier<String> serviceToken;
 
     public HttpJournalEntryAdapter(RestClient client, Supplier<String> serviceToken) {
@@ -86,8 +86,10 @@ public class HttpJournalEntryAdapter implements JournalEntryPort {
         return new JournalEntryReceipt(body.journalEntryId(), entry.reference(), body.bookedAt(), body.replay());
     }
 
-    /** The ledger's error body is {code, message, interactionId, timestamp}; only the code is read. */
-    /** Only a plain ledger code (A-Z and underscore) is passed on; anything else is treated as no code. */
+    /**
+     * The ledger's error body is {code, message, interactionId, timestamp}; only the code is read, and only a plain
+     * ledger code (A-Z and underscore, 1 to 64 characters) is passed on. Anything else is treated as no code.
+     */
     private static String rejectionCode(HttpClientErrorException exception) {
         try {
             LedgerError error = exception.getResponseBodyAs(LedgerError.class);

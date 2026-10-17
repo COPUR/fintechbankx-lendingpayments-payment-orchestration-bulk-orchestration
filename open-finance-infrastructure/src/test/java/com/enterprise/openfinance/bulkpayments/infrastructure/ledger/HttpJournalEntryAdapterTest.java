@@ -192,6 +192,19 @@ class HttpJournalEntryAdapterTest {
     }
 
     @Test
+    void aLedgerCodeLongerThan64CharactersIsTreatedAsNoCode() {
+        String longCode = "A".repeat(65);
+        server.expect(requestTo(PATH)).andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"code\":\"" + longCode + "\"}"));
+        assertThatThrownBy(() -> adapter.post(entry))
+                .isInstanceOf(AccountsLedgerUnavailableException.class)
+                .hasMessageContaining("422")
+                .hasMessageNotContaining(longCode)
+                .hasNoCause();
+    }
+
+    @Test
     void everyOtherStatusFailsClosedWithTheStatusOnly() {
         server.expect(requestTo(PATH)).andRespond(withServerError()
                 .contentType(MediaType.APPLICATION_JSON).body("{\"code\":\"INTERNAL\",\"message\":\"ACC-1 balance 7.00\"}"));
