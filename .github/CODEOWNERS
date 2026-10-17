@@ -16,6 +16,7 @@
 /deploy/helm/payment-bulk-orchestration-service/templates/_fbx_helpers.tpl @COPUR
 /scripts/ci/verify-vendored-guard.sh @COPUR
 /.github/workflows/deployability.yml @COPUR
+/scripts/ci/chart-render-probes.sh @COPUR
 /.github/CODEOWNERS @COPUR
 # Guardrail 4a (cicd-templates 73e1881): the CI workflows, the exemption file and the fixture check.
 /.github/workflows/ @COPUR
