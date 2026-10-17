@@ -15,9 +15,10 @@ import java.util.function.Supplier;
 
 /**
  * This service's own client-credentials token (Keycloak client svc-pay-bulk-orchestration)
- * for outbound calls: the consent service and the accounts ledger. The scope a registration
- * asks for decides the audiences its token carries: only the accounts-ledger registration asks
- * for aud-svc-acc-accounts-ledger.
+ * for outbound calls: the consent service and the accounts ledger. The ledger audience
+ * svc-acc-accounts-ledger comes from the optional client scope aud-svc-acc-accounts-ledger, which only
+ * the accounts-ledger registration requests. The consent audience comes from a direct audience mapper
+ * on the client, so every token from this client carries it.
  * Present as soon as one HTTP adapter is configured.
  */
 @Configuration
