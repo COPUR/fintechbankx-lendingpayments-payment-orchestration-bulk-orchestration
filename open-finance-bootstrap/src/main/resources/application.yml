@@ -78,7 +78,7 @@ spring:
         jwt:
           issuer-uri: ${OIDC_ISSUER_URI:http://localhost:8180/realms/fintechbankx}
           jwk-set-uri: ${OIDC_JWK_SET_URI:http://localhost:8180/realms/fintechbankx/protocol/openid-connect/certs}
-      # Outbound calls (consent service) use this service's own
+      # Outbound calls (consent service, accounts ledger) use this service's own
       # client-credentials token, never the caller's token.
       client:
         registration:
@@ -187,6 +187,17 @@ openfinance:
         # without marking anything and backs off. Alert on outbox_oldest_pending_age_seconds.
         # Longer than delivery.timeout.ms, so the relay never gives up on a send the producer still retries.
         send-timeout: PT35S
+
+# Journal postings to the accounts ledger (svc-acc-accounts-ledger, ADR-030): POST /api/v1/journal-entries
+# with this service's own client-credentials token (registration consent-service above; the ledger audience
+# comes from the IdP's audience mapper for svc-pay-bulk-orchestration). No use case posts yet.
+journal:
+  # http: the accounts ledger (default, fails closed). in-memory: bookings kept in memory for local runs and tests.
+  adapter: ${JOURNAL_ADAPTER:http}
+  base-url: ${ACCOUNTS_SERVICE_BASE_URL:http://accounts-ledger-service.corebanking.svc.cluster.local:8080}
+  client-registration-id: consent-service
+  connect-timeout: PT1S
+  read-timeout: PT2S
 
 logging:
   pattern:

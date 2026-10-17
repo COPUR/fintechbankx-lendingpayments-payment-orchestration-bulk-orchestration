@@ -12,7 +12,7 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 /**
  * Adapter placement rules from the hexagonal guardrails, mapped onto this
- * repository's adapter packages (rest = inbound web, persistence/outbox/consent = outbound).
+ * repository's adapter packages (rest = inbound web, persistence/outbox/consent/ledger = outbound).
  */
 class BulkInfrastructureArchitectureTest {
 
@@ -39,7 +39,8 @@ class BulkInfrastructureArchitectureTest {
 
     @Test
     void outboundAdaptersDoNotReachIntoTheWebLayer() {
-        noClasses().that().resideInAnyPackage(BASE + ".persistence..", BASE + ".outbox..", BASE + ".consent..")
+        noClasses().that().resideInAnyPackage(BASE + ".persistence..", BASE + ".outbox..", BASE + ".consent..",
+                        BASE + ".ledger..")
                 .should().dependOnClassesThat().resideInAPackage(BASE + ".rest..")
                 .check(INFRASTRUCTURE);
     }
