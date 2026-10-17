@@ -60,6 +60,7 @@ jobs:
           args="$args --set config.OIDC_ISSUER_URI=https://ci-idp/realms/fintechbankx"
           args="$args --set config.OIDC_JWK_SET_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/certs"
           args="$args --set config.OIDC_TOKEN_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/token"
+          args="$args --set config.ACCOUNTS_SERVICE_BASE_URL=http://ci-accounts:8080"
           python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
           rendered_file="$(mktemp)"
           helm template ci "$chart" --namespace payments $args > "$rendered_file"
@@ -111,6 +112,7 @@ jobs:
           args="$args --set config.OIDC_ISSUER_URI=https://ci-idp/realms/fintechbankx"
           args="$args --set config.OIDC_JWK_SET_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/certs"
           args="$args --set config.OIDC_TOKEN_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/token"
+          args="$args --set config.ACCOUNTS_SERVICE_BASE_URL=http://ci-accounts:8080"
           python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
           tmp="$(mktemp -d)"
           # --set-file applies after the --set in $args.
@@ -169,6 +171,7 @@ jobs:
           args="$args --set config.OIDC_ISSUER_URI=https://ci-idp/realms/fintechbankx"
           args="$args --set config.OIDC_JWK_SET_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/certs"
           args="$args --set config.OIDC_TOKEN_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/token"
+          args="$args --set config.ACCOUNTS_SERVICE_BASE_URL=http://ci-accounts:8080"
           python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
           helm template ci "$chart" --namespace payments $args \
             | python3 scripts/ci/db-connection-budget-check.py "$tf"
