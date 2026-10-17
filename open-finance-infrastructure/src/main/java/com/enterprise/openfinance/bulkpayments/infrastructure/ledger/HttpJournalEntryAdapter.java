@@ -17,6 +17,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.math.BigDecimal;
@@ -49,13 +50,14 @@ public class HttpJournalEntryAdapter implements JournalEntryPort {
 
     @Override
     public JournalEntryReceipt post(JournalEntry entry) {
+        String token = bearerToken();
         ResponseEntity<JournalEntryResponse> response;
         try {
             response = client.post()
                     .uri(JOURNAL_ENTRIES_PATH)
                     .contentType(MediaType.APPLICATION_JSON)
                     .accept(MediaType.APPLICATION_JSON)
-                    .header("Authorization", "Bearer " + serviceToken.get())
+                    .header("Authorization", "Bearer " + token)
                     .header("X-FAPI-Interaction-ID", interactionId())
                     .body(JournalEntryRequest.from(entry))
                     .retrieve()
@@ -72,8 +74,12 @@ public class HttpJournalEntryAdapter implements JournalEntryPort {
         } catch (RestClientResponseException exception) {
             throw new AccountsLedgerUnavailableException("Accounts ledger refused the posting: "
                     + exception.getStatusCode().value(), null);
-        } catch (RestClientException | IllegalStateException exception) {
-            throw new AccountsLedgerUnavailableException("Accounts ledger unavailable", exception);
+        } catch (ResourceAccessException transport) {
+            throw new AccountsLedgerUnavailableException("Accounts ledger unavailable", transport);
+        } catch (RestClientException | IllegalStateException unreadable) {
+            // A malformed answer can carry the ledger's text in the exception message: no cause is kept.
+            throw new AccountsLedgerUnavailableException(
+                    "Accounts ledger answered with an unreadable journal entry", null);
         }
         JournalEntryResponse body = response.getBody();
         if (body == null || body.journalEntryId() == null || body.reference() == null
@@ -98,6 +104,20 @@ public class HttpJournalEntryAdapter implements JournalEntryPort {
         } catch (RuntimeException unreadable) {
             return null;
         }
+    }
+
+    /** The service token, fetched before the call. A failure here keeps its own message and cause, never the transport's. */
+    private String bearerToken() {
+        String token;
+        try {
+            token = serviceToken.get();
+        } catch (RuntimeException noToken) {
+            throw new AccountsLedgerUnavailableException("No service token for the accounts ledger", noToken);
+        }
+        if (token == null || token.isBlank()) {
+            throw new AccountsLedgerUnavailableException("No service token for the accounts ledger", null);
+        }
+        return token;
     }
 
     private static String interactionId() {

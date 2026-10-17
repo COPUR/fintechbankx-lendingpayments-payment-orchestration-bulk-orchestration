@@ -205,6 +205,30 @@ class HttpJournalEntryAdapterTest {
     }
 
     @Test
+    void aLedgerCodeOf64CharactersIsKept() {
+        String code = "A".repeat(64);
+        server.expect(requestTo(PATH)).andRespond(withStatus(HttpStatus.UNPROCESSABLE_ENTITY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"code\":\"" + code + "\"}"));
+        assertThatThrownBy(() -> adapter.post(entry))
+                .isInstanceOfSatisfying(JournalEntryRejectedException.class,
+                        rejected -> assertThat(rejected.code()).isEqualTo(code));
+    }
+
+    @Test
+    void aMalformedAnswerFailsClosedWithNoCause() {
+        server.expect(requestTo(PATH)).andRespond(withStatus(HttpStatus.CREATED)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"journalEntryId\": ACC-CUSTOMER-1 12.34}"));
+        assertThatThrownBy(() -> adapter.post(entry))
+                .isInstanceOf(AccountsLedgerUnavailableException.class)
+                .hasMessage("Accounts ledger answered with an unreadable journal entry")
+                .hasNoCause()
+                .hasMessageNotContaining("ACC-CUSTOMER-1")
+                .hasMessageNotContaining("12.34");
+    }
+
+    @Test
     void everyOtherStatusFailsClosedWithTheStatusOnly() {
         server.expect(requestTo(PATH)).andRespond(withServerError()
                 .contentType(MediaType.APPLICATION_JSON).body("{\"code\":\"INTERNAL\",\"message\":\"ACC-1 balance 7.00\"}"));
@@ -279,7 +303,10 @@ class HttpJournalEntryAdapterTest {
             throw new IllegalStateException("No service token");
         });
 
-        assertThatThrownBy(() -> noToken.post(entry)).isInstanceOf(AccountsLedgerUnavailableException.class);
+        assertThatThrownBy(() -> noToken.post(entry))
+                .isInstanceOf(AccountsLedgerUnavailableException.class)
+                .hasMessage("No service token for the accounts ledger")
+                .hasCauseInstanceOf(IllegalStateException.class);
         server.verify();
     }
 

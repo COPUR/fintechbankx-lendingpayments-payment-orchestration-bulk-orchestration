@@ -2,12 +2,20 @@
 # PyYAML for the deploy/helm checks in .github/workflows/deployability.yml. Source it, do not run it:
 #   . scripts/ci/pyyaml-venv.sh
 # Pinned by hash and installed from wheels only, into a venv under RUNNER_TEMP when the runner's Python lacks yaml
-# (PEP 668 blocks pip --user on the fbx-ci Ubuntu VM). The PATH export persists in the sourcing shell.
+# (PEP 668 blocks pip --user on externally managed Pythons, such as Ubuntu 24.04). The PATH export persists in the
+# sourcing shell. Every failure returns 1, so a caller under set -e stops at this line.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  echo "pyyaml-venv.sh must be sourced, not run: . scripts/ci/pyyaml-venv.sh" >&2
+  exit 1
+fi
 if ! python3 -c "import yaml" 2>/dev/null; then
-  : "${RUNNER_TEMP:?RUNNER_TEMP must be set: the PyYAML venv is created under the runner temp directory}"
+  if [ -z "${RUNNER_TEMP:-}" ]; then
+    echo "RUNNER_TEMP must be set: the PyYAML venv is created under the runner temp directory" >&2
+    return 1
+  fi
   venv="$RUNNER_TEMP/fbx-chart-probes-venv"
-  python3 -m venv "$venv"
-  cat > "$venv/requirements.txt" <<'REQUIREMENTS'
+  python3 -m venv "$venv" || return 1
+  cat > "$venv/requirements.txt" <<'REQUIREMENTS' || return 1
 pyyaml==6.0.2 \
     --hash=sha256:0a9a2848a5b7feac301353437eb7d5957887edbf81d56e903999a75a3d743086 \
     --hash=sha256:29717114e51c84ddfba879543fb232a6ed60086602313ca38cce623c1d62cfbf \
@@ -62,6 +70,10 @@ pyyaml==6.0.2 \
     --hash=sha256:6395c297d42274772abc367baaa79683958044e5d3835486c16da75d2a694631 \
     --hash=sha256:39693e1f8320ae4f43943590b49779ffb98acb81f788220ea932a6b6c51004d8
 REQUIREMENTS
-  "$venv/bin/python" -m pip install --quiet --only-binary=:all: --require-hashes -r "$venv/requirements.txt"
+  "$venv/bin/python" -m pip install --quiet --only-binary=:all: --require-hashes -r "$venv/requirements.txt" || return 1
+  "$venv/bin/python" -c "import yaml" || {
+    echo "PyYAML does not import from $venv after the hashed install" >&2
+    return 1
+  }
   export PATH="$venv/bin:$PATH"
 fi
