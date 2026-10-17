@@ -141,8 +141,7 @@ class DatabaseMigrationIT {
                 arg("fintechbankx.tls.enforce", "false"),
                 arg("spring.datasource.url", PostgresTestDatabase.url()),
                 arg("DB_USERNAME", PostgresTestDatabase.RUNTIME_ROLE),
-                arg("spring.flyway.user", PostgresTestDatabase.ownerUser()),
-                arg("spring.flyway.password", "wrong-value"),
+                arg("spring.flyway.user", "migration_role_that_does_not_exist"),
                 arg("spring.flyway.schemas", SCHEMA),
                 arg("spring.flyway.default-schema", SCHEMA));
 
