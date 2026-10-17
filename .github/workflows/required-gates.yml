@@ -44,7 +44,9 @@ jobs:
           POSTGRES_USER: bulk_test
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
-          - 5432:5432
+          # Loopback only, on a random host port: another job on the shared fbx-ci Docker host cannot
+          # reach this trust-auth database, and two jobs never claim the same port. Read in the first step.
+          - "127.0.0.1::5432"
         options: >-
           --health-cmd "pg_isready -U bulk_test -d db_pay_bulk_orchestration_test"
           --health-interval 5s
@@ -53,10 +55,12 @@ jobs:
     env:
       # PostgreSQL integration tests in open-finance-bootstrap run Flyway and the
       # whole service against this database. With CI=true (set by GitHub) they
-      # fail instead of skipping if TEST_DB_URL is missing.
-      TEST_DB_URL: jdbc:postgresql://localhost:5432/db_pay_bulk_orchestration_test
+      # fail instead of skipping if TEST_DB_URL is missing; the first step sets it.
       TEST_DB_USERNAME: bulk_test
     steps:
+      - name: Point tests at the service container's mapped port
+        run: echo "TEST_DB_URL=jdbc:postgresql://localhost:${{ job.services.postgres.ports['5432'] }}/db_pay_bulk_orchestration_test" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
