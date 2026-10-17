@@ -17,7 +17,7 @@ import java.time.Duration;
 /**
  * Journal postings to the accounts ledger (svc-acc-accounts-ledger, ADR-030). Default:
  * POST /api/v1/journal-entries over HTTP with this service's own client-credentials
- * token. {@code journal.adapter=in-memory} keeps bookings in memory for local runs
+ * token from the accounts-ledger client registration (not the consent-service one). {@code journal.adapter=in-memory} keeps bookings in memory for local runs
  * and tests only. No use case calls the port yet; this wires the adapter only.
  */
 @Configuration
@@ -32,7 +32,7 @@ public class JournalClientConfiguration {
                 RestClient.Builder builder,
                 OAuth2AuthorizedClientManager serviceAuthorizedClientManager,
                 @Value("${journal.base-url}") String baseUrl,
-                @Value("${journal.client-registration-id:consent-service}") String registrationId,
+                @Value("${journal.client-registration-id:accounts-ledger}") String registrationId,
                 @Value("${journal.connect-timeout:PT1S}") Duration connectTimeout,
                 @Value("${journal.read-timeout:PT2S}") Duration readTimeout) {
             ClientHttpRequestFactorySettings settings = ClientHttpRequestFactorySettings.DEFAULTS
