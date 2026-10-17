@@ -16,6 +16,7 @@ args="$args --set config.KAFKA_BOOTSTRAP_SERVERS=ci-kafka:9098"
 args="$args --set config.OIDC_ISSUER_URI=https://ci-idp/realms/fintechbankx"
 args="$args --set config.OIDC_JWK_SET_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/certs"
 args="$args --set config.OIDC_TOKEN_URI=https://ci-idp/realms/fintechbankx/protocol/openid-connect/token"
+args="$args --set config.ACCOUNTS_SERVICE_BASE_URL=http://ci-accounts:8080"
 helm lint "$chart" $args
 helm template ci "$chart" --namespace payments $args > /dev/null
 helm template ci "$chart" --namespace payments -f "$chart/values-dev.yaml" $args > /dev/null
@@ -162,6 +163,7 @@ refuse() {
 # What 6b6c317 adds, each refused for its own reason. The database CA mount is pinned (fbx.validateDatabaseCa):
 # /app is the image WORKDIR and Spring Boot loads ./config/application.yml; another ConfigMap or key replaces
 # the database trust anchor; the adapter must pass configMapName (Helm deletes a key set to null).
+refuse 'config.ACCOUNTS_SERVICE_BASE_URL is required' --set-string config.ACCOUNTS_SERVICE_BASE_URL=
 refuse 'databaseCa.mountPath must be /etc/fintechbankx/rds-ca' --set-string rdsCaBundle.mountPath=/app/config
 refuse 'databaseCa.key must be global-bundle.pem' --set-string rdsCaBundle.key=other-bundle.pem
 refuse 'databaseCa.configMapName must be rds-ca-bundle' --set-string rdsCaBundle.configMapName=any-config
@@ -267,7 +269,13 @@ grep -q "METRICS_TAG_APP: \"$sa\"" <<<"$rendered"
 # Pod labels and selection (cicd-templates 335a345): API and Job pods both carry
 # app.kubernetes.io/name=<SA> (mesh Aurora egress); every selector requires component=service, so none
 # selects the db-migration Job pod; only the API pods carry fintechbankx.io/service-id.
-python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml==6.0.2
+# PyYAML for the checks below, in a throwaway venv: the runner's Python may be externally managed,
+# where pip --user fails.
+if ! python3 -c "import yaml" 2>/dev/null; then
+  pyyaml_venv="$(mktemp -d)/pyyaml"
+  python3 -m venv "$pyyaml_venv" && "$pyyaml_venv/bin/pip" install --quiet pyyaml==6.0.2 || exit 1
+  PATH="$pyyaml_venv/bin:$PATH"
+fi
 python3 scripts/ci/helm-selector-check.py "$sa" svc-pay-bulk-orchestration <<<"$rendered"
 helm template ci "$chart" --namespace payments -f "$chart/values-dev.yaml" $args \
   | python3 scripts/ci/helm-selector-check.py "$sa" svc-pay-bulk-orchestration
