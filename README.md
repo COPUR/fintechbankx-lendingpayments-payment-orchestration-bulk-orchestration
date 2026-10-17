@@ -112,7 +112,8 @@ label `fintechbankx.io/app: app-pay-bulk-orchestration`, database `db_pay_bulk_o
 
 ```bash
 ./gradlew --no-daemon clean check            # unit + ArchUnit + coverage gate; Postgres ITs skip
-TEST_DB_URL=jdbc:postgresql://localhost:5432/<db> TEST_DB_USERNAME=<user> TEST_DB_PASSWORD=<pw> \
+export TEST_DB_PASSWORD=<test-db-password>
+TEST_DB_URL=jdbc:postgresql://localhost:5432/<db> TEST_DB_USERNAME=<user> \
   ./gradlew --no-daemon clean check          # also runs the Postgres ITs (CI=true without a DB fails)
 ```
 
