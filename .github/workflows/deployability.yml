@@ -41,8 +41,8 @@ jobs:
       - name: Vendored guard matches the platform copy
         run: |
           # Source repository: COPUR/fintechbankx-platform-delivery-iac-cicd-templates
-          # Path: charts/fintechbankx-service/templates/_helpers.tpl, commit 6b6c317 (sha256 pinned below)
-          scripts/ci/verify-vendored-guard.sh deploy/helm/payment-bulk-orchestration-service 8ba2e4a11ead019c25bf0a01e4fe4bbabb6fef0e1980e5fa828ccb9f5673f8ba
+          # Path: charts/fintechbankx-service/templates/_helpers.tpl, commit 73e1881 (sha256 pinned below)
+          scripts/ci/verify-vendored-guard.sh deploy/helm/payment-bulk-orchestration-service 4f2cdfe056f5afce0297f699c8b66cb80dc42e8e311759bf4a973f8a15b28b2d
       - name: Lint and render chart
         run: |
           chart=deploy/helm/payment-bulk-orchestration-service
@@ -215,9 +215,9 @@ jobs:
           refuse 'config.KAFKA_SECURITY_PROTOCOL must be SSL with kafka.runtime strimzi' --set kafkaStrimzi.enabled=true --set-string config.KAFKA_SECURITY_PROTOCOL=SASL_SSL
           refuse 'config.SPRING_KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM must be https' --set-string config.SPRING_KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM=
           refuse 'config.SPRING_KAFKA_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM must be https' --set-string config.SPRING_KAFKA_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM=
-          # Chart-local rule kept on top of the guard: raw Kafka client properties outside ssl.* (sasl.*, ...).
-          refuse 'config.spring.kafka.properties.sasl.jaas.config is not allowed: a raw Kafka client property' --set-string 'config.spring\.kafka\.properties\.sasl\.jaas\.config=x'
-          refuse 'config.spring.kafka.consumer.properties.sasl.mechanism is not allowed: a raw Kafka client property' --set-string 'config.spring\.kafka\.consumer\.properties\.sasl\.mechanism=x'
+          # The guard names sasl.* and jaas (a Kafka SASL or JAAS setting); the chart-local rule refuses the other raw Kafka client properties.
+          refuse 'config.spring.kafka.properties.sasl.jaas.config is not allowed: a Kafka SASL or JAAS setting' --set-string 'config.spring\.kafka\.properties\.sasl\.jaas\.config=x'
+          refuse 'config.spring.kafka.consumer.properties.sasl.mechanism is not allowed: a Kafka SASL or JAAS setting' --set-string 'config.spring\.kafka\.consumer\.properties\.sasl\.mechanism=x'
           refuse 'config.SPRING_KAFKA_PRODUCER_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM is not allowed: a raw Kafka client property' --set-string config.SPRING_KAFKA_PRODUCER_PROPERTIES_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM=https
           # DocumentDB names: the connection string comes only from MONGODB_URI in a Secret.
           refuse 'config.SPRING_DATA_MONGODB_URI is not allowed: a spring.data.mongodb.\* property' --set-string config.SPRING_DATA_MONGODB_URI=mongodb://docdb.example.internal:27017/db
@@ -235,6 +235,17 @@ jobs:
           # JVM options in a config entry: kafka and mongodb are refused with the datasource and TLS settings.
           refuse 'config.JAVA_TOOL_OPTIONS must not mention .*kafka' --set-string 'config.JAVA_TOOL_OPTIONS=-Dspring.kafka.bootstrap-servers=other.example.internal:9092'
           refuse 'config.JAVA_TOOL_OPTIONS must not mention .*mongodb' --set-string 'config.JAVA_TOOL_OPTIONS=-Dspring.data.mongodb.uri=mongodb://docdb.example.internal:27017/db'
+          # Schema-management names, JVM options and bracket names (cicd-templates 73e1881): each refused for its own reason.
+          refuse 'config\.SPRING_JPA_HIBERNATE_DDL_AUTO is not allowed: a schema-management setting' --set-string config.SPRING_JPA_HIBERNATE_DDL_AUTO=create-drop
+          refuse 'config\.spring\.jpa\.generate-ddl is not allowed: a schema-management setting' --set-string 'config.spring\.jpa\.generate-ddl=true'
+          refuse 'config\.SPRING_JPA_PROPERTIES_HIBERNATE_HBM2DDL_AUTO is not allowed: a schema-management setting' --set-string config.SPRING_JPA_PROPERTIES_HIBERNATE_HBM2DDL_AUTO=update
+          refuse 'config\.SPRING_SQLINIT_MODE is not allowed: a schema-management setting' --set-string config.SPRING_SQLINIT_MODE=always
+          refuse 'config\.JAVAX_PERSISTENCE_SCHEMA_GENERATION_DATABASE_ACTION is not allowed: a schema-management setting' --set-string config.JAVAX_PERSISTENCE_SCHEMA_GENERATION_DATABASE_ACTION=drop-and-create
+          refuse 'config\.spring\.j_pa\.hibernate\.ddl-auto is not allowed: a schema-management setting' --set-string 'config.spring\.j_pa\.hibernate\.ddl-auto=create'
+          refuse 'config\.JAVA_TOOL_OPTIONS must not mention .*spring\.jpa, spring\.sql\.init, hibernate' --set-string 'config.JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75 -Dspring.jpa.hibernate.ddl-auto=create-drop'
+          refuse 'config\.JDK_JAVA_OPTIONS must not mention .*hibernate' --set-string config.JDK_JAVA_OPTIONS=-Dhibernate.hbm2ddl.auto=update
+          refuse 'config\.JAVA_TOOL_OPTIONS must not mention .*spring\.sql\.init' --set-string config.JAVA_TOOL_OPTIONS=-Dspring.sql.init.mode=always
+          refuse 'config\.JAVA_TOOL_OPTIONS must not mention .*spring\.jpa' --set-string 'config.JAVA_TOOL_OPTIONS=-Dspring.j_pa.generate-ddl=true'
           # Still allowed: the datasource credentials and a JVM option that mentions none of the guarded settings.
           helm template ci "$chart" --namespace payments $args --set-string config.SPRING_DATASOURCE_USERNAME=payment_bulk_app > /dev/null
           helm template ci "$chart" --namespace payments $args --set-string "config.JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError" > /dev/null

@@ -77,7 +77,7 @@ ExternalSecret adds its own (service or db-migration).
 {{- /*
 Values guard (governance round 3, item 1; round 6, guardrail 4a). The platform
 guard is vendored byte-identical in _fbx_helpers.tpl (cicd-templates
-charts/fintechbankx-service/templates/_helpers.tpl at 6b6c317; sha256 pinned
+charts/fintechbankx-service/templates/_helpers.tpl at 73e1881; sha256 pinned
 in README.md and checked by the deployability workflow). fbx.guard reads only
 .Values, so bulk.guard feeds it an adapter dict built from this chart's own
 values, mapping every route the chart renders:
@@ -110,7 +110,7 @@ Rules kept on top of fbx.guard (bulk.guardEnv), because it does not do them:
     properties (sasl.*, ...) alone; the profiles carry the Kafka client
     settings, so this chart accepts none of them from values;
   - kafkaStrimzi.enabled must be a boolean.
-Dropped (fbx.guard covers them, 6b6c317 included): spring.kafka[.<client>].ssl.*
+Dropped (fbx.guard covers them, 73e1881 included): spring.kafka[.<client>].ssl.*
 and spring.kafka[.<client>].properties.ssl.* names, spring.data.mongodb.*,
 kafka and mongodb in JVM option values, JDBC URL parsing, datasource/Flyway/Liquibase/
 R2DBC/application.json/jdbc_url/sslfactory/sslhostnameverifier names,
